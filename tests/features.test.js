@@ -47,7 +47,10 @@ test('corrected typing, a ticked-then-unticked box and new tabs are dropped', ()
 test('questions are told apart from tasks', () => {
   for (const q of ['What time do they open on Sunday?', 'where is the vegetarian info', 'Show me where the address is', 'highlight the opening hours', 'find the price on this page'])
     assert.equal(isQuestion(q), true, q);
-  for (const t of ['Book a table for two at eight', 'Open YouTube and play a Burna Boy video', 'find running shoes on Amazon'])
+  // Spoken: filler first, no question mark.
+  for (const q of ['so what\'s my most recent WhatsApp message', 'hey Mo, do I have any new emails', 'okay so tell me the latest message'])
+    assert.equal(isQuestion(q), true, q);
+  for (const t of ['Book a table for two at eight', 'Open YouTube and play a Burna Boy video', 'find running shoes on Amazon', 'so book a table for two'])
     assert.equal(isQuestion(t), false, t);
 });
 

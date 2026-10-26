@@ -13,7 +13,7 @@ import { formatStep } from './prompts.js';
 import { addDemo, clearDemos, deleteSkill, listDemos, listSkills, recallDemo, renameSkill, updateDemo } from './memory.js';
 import { verifyDone, verifySafe, verifierEnabled } from './verifier.js';
 import { authRequired, checkRate, corsOrigin, currentUser, runAs, usage, userFor } from './account.js';
-import { lineFor, synthesize, voiceConfig } from './speech.js';
+import { lineFor, synthesize, synthesizeLine, voiceConfig } from './speech.js';
 import { signals as linkSignals, localVerdict, domainAgeDays, loadFeed, feedSize, memory as guardMemory, linkMessage, explain, brandFor, evalResults, MODEL_THRESHOLD } from './guard.js';
 import { clearCalls, ledgerStats, recentCalls, addRun, readRuns, getSettings, saveSettings, onEvent, emit } from './ledger.js';
 
@@ -62,7 +62,7 @@ const routes = {
     requireFields({ event });
     const { say, show } = lineFor(String(event), data && typeof data === 'object' ? data : {});
     let audio = null, voiceError = null;
-    if (voice) try { audio = await synthesize(say); } catch (err) { voiceError = err.message; console.error(`[mo] voice: ${err.message}`); }
+    if (voice) try { audio = await synthesizeLine(say); } catch (err) { voiceError = err.message; console.error(`[mo] voice: ${err.message}`); }
     return { say, show, audio: audio ? audio.toString('base64') : null, mime: 'audio/mpeg', voice: voiceConfig().enabled ? voiceConfig().voice : null, voiceError };
   },
   'GET /api/usage': async () => usage(),

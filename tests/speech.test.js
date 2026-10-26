@@ -11,7 +11,7 @@ import path from 'node:path';
 process.env.SHOWME_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mo-speech-'));
 process.env.SHOWME_MOCK = '1';
 process.env.FISH_API_KEY = ''; // set but empty, so .env doesn't fill it in
-const { stripCues, lineFor, EVENTS } = await import('../server/speech.js');
+const { stripCues, lineFor, EVENTS, pieces } = await import('../server/speech.js');
 const { createServer } = await import('../server/index.js');
 
 test('cues are spoken, never shown', () => {
@@ -55,4 +55,12 @@ test('/api/speak returns the spoken and shown line; no voice set up means no aud
   assert.doesNotMatch(j.show, /\[/);
   assert.equal(j.audio, null);
   assert.equal(j.voice, null);
+});
+
+test('a long line is voiced in pieces of a sentence or two, nothing lost', () => {
+  const { say } = lineFor('asked', { question: 'The WhatsApp Web chat list isn\'t showing any conversation entries, even after waiting and scrolling. Can you show me where the most recent message appears, or tell me which chat to open?' }, () => 0);
+  const parts = pieces(say);
+  assert.ok(parts.length >= 2 && parts.every(p => p.length <= 160 || !/[.?!] /.test(p)), parts.join(' | '));
+  assert.equal(parts.join(' '), say);
+  assert.deepEqual(pieces('[pleased] All done!'), ['[pleased] All done!']);
 });
