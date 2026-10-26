@@ -414,6 +414,29 @@ test('"Do I have any WhatsApp messages?" asked from the inbox: the plan opens Wh
   await panel.close(); await site.close();
 });
 
+test('a chat list drawn from divs (as WhatsApp does) is read, and a spoken question finds the latest chat', { timeout: 60_000, skip: live }, async () => {
+  const site = await context.newPage();
+  await site.goto(`${base}/demo/helpdesk/`);
+  await site.evaluate(() => {
+    document.body.innerHTML = `<div aria-label="Chat list" role="grid">
+      <div role="row"><div role="gridcell" tabindex="0"><div role="button"><span>Ada Lovelace</span><span>21:58</span><span>Running late, see you at 8</span></div></div></div>
+      <div role="row"><div role="gridcell" tabindex="0"><div role="button"><span>Mum</span><span>Yesterday</span><span>Call me when you can</span></div></div></div>
+    </div>`;
+  });
+  const tabId = await tabIdFor(`${base}/demo/helpdesk/`);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html?tabId=${tabId}`);
+  await panel.waitForSelector('#mode.mock', { timeout: 10_000 });
+  const blocks = await panel.evaluate(async id => (await (await import('./agent-core.js')).snapshot(id)).blocks.map(b => b.text), tabId);
+  console.log('chat blocks:', blocks);
+  assert.ok(blocks.some(t => /Ada Lovelace.*Running late/.test(t)), 'each chat row is a block');
+  await panel.fill('#goal', 'so what did Ada say in her latest message');
+  await panel.click('#run');
+  await panel.waitForSelector('#verdict:not([hidden])', { timeout: 30_000 });
+  assert.match(await panel.textContent('#timeline'), /Found it:.*Running late/);
+  await panel.close(); await site.close();
+});
+
 // Sheet to form: read the sheet, do row 1 on the form with two notes, check the rules, and
 // Mo adds the other nine starters. A blank Dept follows Sarah's note; "Eng" becomes Engineering.
 test('sheet to form: do row 1, Mo does the other rows', { timeout: live ? 1_200_000 : 240_000 }, async () => {

@@ -65,6 +65,30 @@ export const voiceConfig = () => ({
   model: process.env.FISH_MODEL || 's2.1-pro-free',
 });
 
+// A long line is split into pieces of a sentence or two, voiced at the same time (three at
+// once) and joined: MP3 frames play back to back, so the whole line takes about as long as
+// its longest piece instead of timing out. Any piece failing means no audio (the computer's
+// voice says the line), never half a line in each voice.
+export function pieces(text, max = 160) {
+  const sentences = String(text).split(/(?<=[.?!…])\s+(?=\S)/);
+  const out = [];
+  for (const s of sentences) {
+    if (out.length && (out[out.length - 1] + ' ' + s).length <= max) out[out.length - 1] += ` ${s}`;
+    else out.push(s);
+  }
+  return out.filter(p => stripCues(p));
+}
+
+export async function synthesizeLine(text, { signal } = {}) {
+  const parts = pieces(text);
+  if (parts.length <= 1) return synthesize(text, { signal });
+  const clips = new Array(parts.length);
+  let next = 0;
+  const worker = async () => { while (next < parts.length) { const i = next++; clips[i] = await synthesize(parts[i], { signal }); } };
+  await Promise.all([worker(), worker(), worker()]);
+  return clips.every(Boolean) ? Buffer.concat(clips) : null;
+}
+
 export async function synthesize(text, { signal } = {}) {
   const { enabled, voice, model } = voiceConfig();
   if (!enabled) return null;
@@ -72,8 +96,9 @@ export async function synthesize(text, { signal } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${crypto.createHash('sha1').update(`${voice}|${model}|${text}`).digest('hex').slice(0, 16)}.mp3`);
   if (fs.existsSync(file) && fs.statSync(file).size > 500) return fs.readFileSync(file);
+  const limit = Number(process.env.FISH_TIMEOUT_MS || 20000);
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), Number(process.env.FISH_TIMEOUT_MS || 10000));
+  const timer = setTimeout(() => ctrl.abort(), limit);
   signal?.addEventListener('abort', () => ctrl.abort());
   try {
     const res = await fetch('https://api.fish.audio/v1/tts', {
@@ -86,6 +111,9 @@ export async function synthesize(text, { signal } = {}) {
     const audio = Buffer.from(await res.arrayBuffer());
     fs.writeFileSync(file, audio);
     return audio;
+  } catch (err) {
+    if (err.name === 'AbortError' && !signal?.aborted) throw new Error(`Fish Audio took more than ${Math.round(limit / 1000)} s for "${stripCues(text).slice(0, 60)}"`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }

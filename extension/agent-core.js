@@ -252,11 +252,14 @@ export function privacyFloor(next, page) {
 
 // Questions and "show me where…" requests get an answer highlighted on the page instead
 // of (or after) clicking around.
+// Spoken goals start with filler ("so what's my…", "hey Mo, do I have…") and have no "?".
+const FILLER = /^(?:(?:so|ok|okay|hey|hi|hello|um+|uh+|erm|well|and|but|please|now|alright|right|mo|emo)\b[\s,.!]*)+/;
 export function isQuestion(goal) {
-  const g = String(goal).trim().toLowerCase();
+  const g = String(goal).trim().toLowerCase().replace(FILLER, '');
   return /\?$/.test(g)
     || /^(what|when|where|who|whom|which|why|how|is|are|was|were|does|do|did|can|could|should|will|would|has|have)\b/.test(g)
     || /^(show|tell) me (where|what|when|how|which|who|if)\b/.test(g)
+    || /^(tell me|let me know)\b/.test(g)
     || /^(highlight|point (me )?(to|at)|locate)\b/.test(g)
     || /^find\b.*\b(on|in) (this|the) page\b/.test(g)
     || /\b(check|see|find out|know|tell me) (if|whether)\b/.test(g);

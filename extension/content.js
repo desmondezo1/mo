@@ -118,12 +118,14 @@
 
   // Readable text blocks (headings, paragraphs, list items, table cells…), each with an
   // id, so the agent can answer a question by pointing at the part of the page it came from.
-  const BLOCKS = 'h1,h2,h3,h4,p,li,dt,dd,td,th,blockquote,figcaption,pre,[role=heading]';
+  // Rows and cells by role too: web apps like WhatsApp draw their chat lists from divs.
+  const ROW_BLOCKS = '[role=listitem],[role=row],[role=gridcell],[role=article]';
+  const BLOCKS = `h1,h2,h3,h4,p,li,dt,dd,td,th,blockquote,figcaption,pre,[role=heading],${ROW_BLOCKS}`;
   const MAX_BLOCKS = 60;
   function textBlocks() {
     const SITE_CHROME = 'nav,header,footer,aside,[role=navigation],[role=banner],[role=contentinfo]';
     const all = [...document.querySelectorAll(BLOCKS)].filter(el =>
-      isVisible(el) && !el.querySelector(BLOCKS) && clean(el.innerText).length > 1 && !el.closest(SELECTOR));
+      isVisible(el) && !el.querySelector(BLOCKS) && clean(el.innerText).length > 1 && (!el.closest(SELECTOR) || el.matches(ROW_BLOCKS)));
     const main = all.filter(el => !el.closest(SITE_CHROME));
     const pool = (main.length >= 3 ? main : all).map((el, index) => {
       const r = el.getBoundingClientRect();
