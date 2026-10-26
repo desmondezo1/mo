@@ -12,6 +12,7 @@ import { callTask, getConfig, LlmError } from './llm.js';
 import { formatStep } from './prompts.js';
 import { addDemo, clearDemos, deleteSkill, listDemos, listSkills, recallDemo, renameSkill, updateDemo } from './memory.js';
 import { verifyDone, verifySafe, verifierEnabled } from './verifier.js';
+import { authRequired, checkRate, corsOrigin, currentUser, runAs, usage, userFor } from './account.js';
 import { signals as linkSignals, localVerdict, domainAgeDays, loadFeed, feedSize, memory as guardMemory, linkMessage, explain, brandFor, evalResults, MODEL_THRESHOLD } from './guard.js';
 import { clearCalls, ledgerStats, recentCalls, addRun, readRuns, getSettings, saveSettings, onEvent, emit } from './ledger.js';
 
@@ -41,6 +42,18 @@ const routes = {
     const { provider, model, baseUrl } = getConfig();
     return { ok: true, provider, model, viaMubit: provider !== 'mock', baseUrl: provider === 'mock' ? null : baseUrl };
   },
+
+  // How the extension signs in. The anon key is public by design (Supabase), so it can go to
+  // the browser; the service key and the JWT secret never leave the server.
+  'GET /api/config': async () => ({
+    authRequired: authRequired(),
+    supabaseUrl: authRequired() ? process.env.SUPABASE_URL.replace(/\/$/, '') : null,
+    supabaseAnonKey: authRequired() ? process.env.SUPABASE_ANON_KEY || null : null,
+    signIn: authRequired() ? (process.env.SIGN_IN_METHODS || 'google,email').split(',').map(x => x.trim()) : [],
+  }),
+
+  'GET /api/me': async () => ({ user: currentUser(), usage: usage() }),
+  'GET /api/usage': async () => usage(),
 
   'POST /api/next-action': async ({ goal, page, history, sessionId, skill }) => {
     requireFields({ goal, page, sessionId });
@@ -404,11 +417,12 @@ async function mapLimit(items, limit, fn) {
 
 // Server-sent events: the side panel's live feed of calls, runs and lessons.
 function streamEvents(req, res) {
+  const origin = corsOrigin(req.headers.origin);
   res.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
     connection: 'keep-alive',
-    'access-control-allow-origin': '*',
+    ...(origin ? { 'access-control-allow-origin': origin, vary: 'origin' } : {}),
   });
   res.write(': connected\n\n');
   const off = onEvent((type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`));
@@ -417,11 +431,12 @@ function streamEvents(req, res) {
 }
 
 function send(res, status, body, type = 'application/json') {
+  const origin = corsOrigin(res.req?.headers.origin);
   res.writeHead(status, {
     'content-type': type,
-    'access-control-allow-origin': '*',
+    ...(origin ? { 'access-control-allow-origin': origin, vary: 'origin' } : {}),
     'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, authorization',
   });
   res.end(type === 'application/json' ? JSON.stringify(body) : body);
 }
@@ -458,18 +473,30 @@ export function createServer() {
     if (req.method === 'OPTIONS') return send(res, 204, '', 'text/plain');
     if (url.pathname === '/') { res.writeHead(302, { location: '/demo/' }); return res.end(); }
     if (req.method === 'GET' && url.pathname.startsWith('/demo')) return serveStatic(res, url.pathname);
-    if (req.method === 'GET' && url.pathname === '/api/events') return streamEvents(req, res);
     const handler = routes[`${req.method} ${url.pathname}`];
-    if (!handler) return send(res, 404, { error: 'Not found' });
+    if (!handler && !(req.method === 'GET' && url.pathname === '/api/events')) return send(res, 404, { error: 'Not found' });
+    // Who is calling. /api/health and /api/config are public; everything else runs as the
+    // signed-in user (hosted), or as "local" (no SUPABASE_URL).
+    const open = url.pathname === '/api/health' || url.pathname === '/api/config';
+    let user;
     try {
-      const body = req.method === 'POST' ? await readBody(req) : {};
-      send(res, 200, await handler(body));
+      user = open ? null : await userFor(req, url);
+    } catch (err) {
+      return send(res, err.status || 401, { error: err.message, code: 'signed_out' });
+    }
+    if (url.pathname === '/api/events') return runAs(user, () => streamEvents(req, res));
+    try {
+      await runAs(user, async () => {
+        if (!open) checkRate();
+        const body = req.method === 'POST' ? await readBody(req) : {};
+        send(res, 200, await handler(body));
+      });
     } catch (err) {
       // Our own validation errors keep their status; anything from Mubit or the provider is a 502.
       // A garbled model answer is the agent's mistake (422, teachable); a failed call is infrastructure (502).
       const status = err.code === 'bad_reply' ? 422 : err instanceof LlmError ? 502 : (err.status || 500);
       console.error(`[show-me] ${req.method} ${url.pathname}: ${err.message}`);
-      send(res, status, { error: err.message, requestId: err.requestId || null, agentError: err.code === 'bad_reply' });
+      send(res, status, { error: err.message, code: err.code || null, requestId: err.requestId || null, agentError: err.code === 'bad_reply' });
     }
   });
 }
@@ -485,7 +512,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
   server.listen(PORT, () => {
     const { provider, model } = getConfig();
     const mode = provider === 'mock' ? 'MOCK model (no MUBIT_API_KEY set)' : `${provider} / ${model} via Mubit`;
-    console.log(`Mo server on http://localhost:${PORT}  ·  ${mode}`);
+    console.log(`Mo server on http://localhost:${PORT}  ·  ${mode}  ·  ${authRequired() ? `sign-in required (Supabase), cap ${process.env.MONTHLY_DECISION_CAP || 3000} decisions a month` : 'local mode (no sign-in)'}`);
     console.log(`Demo site: http://localhost:${PORT}/demo/`);
   });
 }

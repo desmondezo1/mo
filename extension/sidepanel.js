@@ -5,6 +5,7 @@ import { createMubitView, esc, fmtUsd, prettyModel } from './panel-mubit.js';
 import { InfraError, createApi, isOwnPage, isWebPage, sleep, waitForLoad, send, snapshot, describeAction, shortUrl, runAgent, mo as moOn } from './agent-core.js';
 import { createVoiceSession } from './voice-core.js';
 import { createJudgesView } from './panel-judges.js';
+import { authConfig, getSession, signInWithGoogle, sendEmailCode, verifyEmailCode, signOut } from './auth-core.js';
 import { parseCsv, toTable, inferRules, valuesForRow, rowGoal, describeRule, rowKey, generatedFromNote } from './sheet-core.js';
 
 const $ = id => document.getElementById(id);
@@ -112,6 +113,74 @@ async function runSkill(sk) {
   if (tab && /^https?:/.test(sk.startUrl || '') && pageOf(tab.url) !== pageOf(sk.startUrl)) await goTo(tab.id, sk.startUrl);
   $('goal').value = sk.goal;
   run(sk.goal, { skill: sk.name });
+}
+
+// ---- Sign-in (hosted Mo) --------------------------------------------------------
+// A hosted server needs a signed-in user; a local one doesn't, and this all stays hidden.
+
+async function refreshAccount() {
+  const cfg = await authConfig(state.server, { fresh: true });
+  const session = cfg.authRequired ? await getSession() : null;
+  const showSignIn = cfg.authRequired && !session;
+  if (showSignIn && $('signin').hidden) {
+    // Start fresh each time the sign-in appears (after signing out, say).
+    $('signin-code').value = ''; $('signin-code-step').hidden = true; $('signin-email-step').hidden = false; $('signin-error').textContent = '';
+  }
+  $('signin').hidden = !showSignIn;
+  $('account').hidden = !session;
+  $('account-email').textContent = session?.email ? `Signed in as ${session.email}` : 'Signed in';
+  $('signin-google').hidden = !(cfg.signIn || []).includes('google');
+  $('signin-email-step').parentElement.querySelector('.or').hidden = !(cfg.signIn || []).includes('google');
+  if (session) refreshUsage();
+  return !cfg.authRequired || !!session;
+}
+
+async function refreshUsage() {
+  try {
+    const u = await api('/api/usage');
+    const el = $('usage');
+    el.hidden = !u.cap;
+    if (u.cap) {
+      el.textContent = `${u.used.toLocaleString()} of ${u.cap.toLocaleString()} decisions this month`;
+      el.classList.toggle('low', u.remaining < u.cap * 0.1);
+    }
+  } catch { /* shown when it works */ }
+}
+
+async function afterSignIn() {
+  $('signin-error').textContent = '';
+  await refreshAccount();
+  refreshHealth(); refreshMemory(); refreshTotals(); mubit.connect(); mubit.refresh();
+}
+
+function wireSignIn() {
+  const busy = (btn, on, text) => { btn.disabled = on; if (text) btn.textContent = text; };
+  const fail = err => { $('signin-error').textContent = err.message || String(err); };
+  $('signin-google').addEventListener('click', async () => {
+    busy($('signin-google'), true);
+    try { await signInWithGoogle(state.server); await afterSignIn(); } catch (err) { fail(err); }
+    busy($('signin-google'), false);
+  });
+  $('signin-send').addEventListener('click', async () => {
+    const email = $('signin-email').value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(new Error('Enter your work email.'));
+    busy($('signin-send'), true, 'Sending…');
+    try {
+      await sendEmailCode(state.server, email);
+      $('signin-email-step').hidden = true; $('signin-code-step').hidden = false;
+      $('signin-error').textContent = ''; $('signin-code').focus();
+    } catch (err) { fail(err); }
+    busy($('signin-send'), false, 'Email me a code');
+  });
+  $('signin-verify').addEventListener('click', async () => {
+    busy($('signin-verify'), true, 'Signing in…');
+    try { await verifyEmailCode(state.server, $('signin-email').value.trim(), $('signin-code').value); await afterSignIn(); } catch (err) { fail(err); }
+    busy($('signin-verify'), false, 'Sign in');
+  });
+  $('signin-code').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin-verify').click(); });
+  $('signin-back').addEventListener('click', () => { $('signin-code-step').hidden = true; $('signin-email-step').hidden = false; });
+  $('sign-out').addEventListener('click', async () => { await signOut(state.server); await refreshAccount(); });
+  chrome.runtime.onMessage.addListener(msg => { if (msg.type === 'mo:signed-out') refreshAccount(); });
 }
 
 // ---- Tab ----------------------------------------------------------------------
@@ -261,6 +330,7 @@ async function run(goal, { skill = null } = {}) {
   $('stop').hidden = true;
 
   refreshTotals();
+  refreshUsage();
   const { failure, infra, asked, usedLesson, outcome } = r;
   if (r.sessionId && $('mode').classList.contains('live')) {
     $('run-session').hidden = false;
@@ -1003,6 +1073,8 @@ async function init() {
   chrome.tabs.onUpdated.addListener((_id, info) => { if (info.title || info.status === 'complete') updateTargetLabel(); });
 
   updateTargetLabel();
+  wireSignIn();
+  await refreshAccount(); // a hosted server shows the sign-in first
   refreshHealth();
   refreshMemory();
   refreshTotals();

@@ -4,23 +4,24 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { currentUser, userDataDir } from './account.js';
 
 const KEPT_EXAMPLES_TO_TRAIN = 25;
 
-function dataDir() {
-  const dir = process.env.SHOWME_DATA_DIR || path.resolve(import.meta.dirname, '..', 'data');
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
+const dataDir = userDataDir; // each user's calls, runs and settings are their own
 
 const callsFile = () => path.join(dataDir(), 'calls.jsonl');
 const runsFile = () => path.join(dataDir(), 'runs.jsonl');
 const settingsFile = () => path.join(dataDir(), 'settings.json');
 
 // Live listeners (the side panel's event stream) hear every call as it is logged.
+// Each listener belongs to one user and only hears that user's events.
 const listeners = new Set();
-export function onEvent(fn) { listeners.add(fn); return () => listeners.delete(fn); }
-export function emit(type, data) { for (const fn of listeners) { try { fn(type, data); } catch { /* a closed stream */ } } }
+export function onEvent(fn) { const entry = { fn, user: currentUser().id }; listeners.add(entry); return () => listeners.delete(entry); }
+export function emit(type, data) {
+  const user = currentUser().id;
+  for (const l of listeners) if (l.user === user) { try { l.fn(type, data); } catch { /* a closed stream */ } }
+}
 
 export function logCall(entry) {
   const record = { ts: new Date().toISOString(), ...entry };

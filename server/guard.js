@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { userDataDir } from './account.js';
 import { BRANDS, WEAK_BRAND_KEYS, REDIRECTORS, SHORTENERS, FREE_HOSTS, RISKY_TLDS, MULTI_SUFFIXES, LOGIN_WORDS } from './guard-data.js';
 
 export const BRANDS_FOR_SEED = BRANDS;
@@ -41,11 +42,7 @@ export const SIGNAL_TEXT = {
   long_url: 'The address is unusually long',
 };
 
-function dataDir() {
-  const dir = process.env.SHOWME_DATA_DIR || path.resolve(import.meta.dirname, '..', 'data');
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
+const dataDir = userDataDir; // each user's answers about sites are their own
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(path.join(dataDir(), file), 'utf8')); } catch { return fallback; } };
 const writeJson = (file, value) => fs.writeFileSync(path.join(dataDir(), file), JSON.stringify(value, null, 2));
 

@@ -5,6 +5,7 @@
 import { SYSTEM_PROMPTS } from './prompts.js';
 import { mockAnswer } from './mock.js';
 import { logCall, costOf } from './ledger.js';
+import { checkBudget, recordUsage } from './account.js';
 
 export function getConfig() {
   const key = process.env.MUBIT_API_KEY || '';
@@ -32,6 +33,7 @@ export class LlmError extends Error {
 // summarize(json) gives the one-line description shown in the live call list.
 export async function callTask({ task, userMessage, sessionId, kind = 'live', mockContext, summarize }) {
   const config = getConfig();
+  checkBudget(); // the user's monthly cap and the service's daily spend cap
   const system = SYSTEM_PROMPTS[task];
   if (!system) throw new Error(`Unknown task ${task}`);
   const started = Date.now();
@@ -52,12 +54,13 @@ export async function callTask({ task, userMessage, sessionId, kind = 'live', mo
   }
   const ms = Date.now() - started;
   const json = parseJson(result.text);
-  logCall({
+  const logged = logCall({
     task, kind, ms, ok: !!json, model: config.model, provider: config.provider, sessionId,
     inTokens: result.inTokens, outTokens: result.outTokens, requestId: result.requestId,
     summary: json ? safeSummary(summarize, json) : 'reply was not JSON',
     ...(json ? {} : { reply: result.text.slice(0, 1500) }), // kept locally to debug bad replies
   });
+  recordUsage(logged.costUsd || 0);
   if (!json) throw new LlmError(`Model reply was not JSON: ${result.text.slice(0, 200)}`, { requestId: result.requestId, code: 'bad_reply' });
   const usage = config.provider === 'mock'
     ? { inTokens: 0, outTokens: 0, costUsd: 0, adapterCostUsd: 0, adapterMs: null, viaMubit: false }
