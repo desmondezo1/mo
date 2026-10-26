@@ -20,7 +20,9 @@ gushing, never robotic. Mo is talking to someone mid-task, so it keeps it short.
 
 ## Writing rules
 
-1. **Short.** One or two sentences, under about 20 words. Long details belong on screen, not in the voice.
+1. **Say what's shown.** The voice says exactly the words in the bubble (only the cues differ), so the person never
+   has to read. Keep Mo's own words short (one or two sentences); a detail it passes on (a question, an answer, why
+   it stopped) is said in full, up to about 400 characters.
 2. **Plain spoken English.** Contractions ("I've", "that's"), no jargon ("decision", "adapter", "session"), no IDs,
    no URLs, no emoji (emoji are read out or dropped).
 3. **Say the result first**, then what's next: "All done. Ten accounts created, one needs a look."
@@ -60,4 +62,7 @@ don't use them. Cues never carry meaning the text doesn't: the shown text must m
   conversational one, not the deep narrator used in the films.
 - Format `mp3`, `latency: "balanced"` for short replies, `normalize: true` so numbers and dates read naturally.
 - The API key stays on the server (`FISH_API_KEY`); the extension asks the server, never Fish directly.
+- The extension plays every line in its offscreen page (`voice.js`, reason `AUDIO_PLAYBACK`), from the panel and from
+  runs started by voice with the panel closed, so a reply after a long run isn't blocked as autoplay. If Fish has no
+  audio, the computer's best system voice says the same words.
 - Audio is cached by voice + text, so common lines ("All done!") play instantly after the first time.

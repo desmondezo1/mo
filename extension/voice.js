@@ -27,8 +27,36 @@ chrome.runtime.onMessage.addListener(msg => {
   if (msg.type === 'voice-start') start(msg.tabId, msg.testScript);
   if (msg.type === 'voice-stop') session?.stop();
   if (msg.type === 'voice-cancel') session?.cancel();
+  if (msg.type === 'say') say(msg);
+  if (msg.type === 'hush') hush();
   return false;
 });
+
+// Mo's reply out loud, for the background (which can't play sound): Fish Audio's recording,
+// or this computer's best voice when there isn't one.
+let playing = null;
+const said = (text, how, error) => chrome.runtime.sendMessage({ type: 'voice:said', text, how, error }).catch(() => {});
+function hush() {
+  playing?.pause();
+  playing = null;
+  self.speechSynthesis?.cancel();
+}
+function say({ audio, mime, text }) {
+  hush();
+  const fallback = err => {
+    if (!text || !self.speechSynthesis) return said(text, 'failed', err?.message || 'no voice on this computer');
+    const voices = speechSynthesis.getVoices().filter(v => /^en(-|_|$)/i.test(v.lang));
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = voices.find(v => /premium|enhanced|natural|neural/i.test(v.name)) || voices.find(v => /google (uk|us) english/i.test(v.name))
+      || voices.find(v => /samantha|ava|daniel|serena/i.test(v.name)) || voices[0] || null;
+    u.rate = 1.03;
+    speechSynthesis.speak(u);
+    said(text, 'system', err?.message);
+  };
+  if (!audio) return fallback();
+  playing = new Audio(`data:${mime || 'audio/mpeg'};base64,${audio}`);
+  playing.play().then(() => said(text, 'fish'), fallback);
+}
 
 chrome.runtime.sendMessage({ type: 'voice:ready' }).catch(() => {});
 

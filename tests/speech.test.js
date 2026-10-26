@@ -22,7 +22,7 @@ test('cues are spoken, never shown', () => {
       const { say, show } = lineFor(event, { question: 'Which sitting is at eight?', answer: '2 July 1991', skill: 'Add a customer account', ok: 10, failed: 1 }, () => i / 3);
       assert.match(say, /\[[a-z -]+\]/, `${event} has a cue to speak`);
       assert.doesNotMatch(show, /[[\]]/, `${event} shows no cue`);
-      assert.ok(show.split(/\s+/).length <= 30, `${event} is short: ${show}`);
+      assert.ok(show.split(/\s+/).length <= 30, `${event} is short when its detail is: ${show}`);
     }
   }
 });
@@ -32,8 +32,15 @@ test('lines read naturally: numbers as words, singular and plural, short details
   assert.equal(lineFor('batch', { ok: 3, failed: 2 }, () => 0).show, 'Three done. Two need a look.');
   assert.equal(lineFor('batch', { ok: 47, failed: 0 }, () => 0).show, 'All 47 done!');
   assert.equal(lineFor('learned', { skill: 'Add a customer account' }, () => 0).show, 'Got it. I\'ve learned how to add a customer account.');
-  const long = lineFor('asked', { question: 'The Create account click ran, but the list still shows 6 accounts. The page says Enter a valid email. Should I change it?' }, () => 0).show;
-  assert.equal(long, 'Quick question. The Create account click ran, but the list still shows 6 accounts.');
+  // What's shown is what's said: the whole question, not just its first sentence.
+  const long = lineFor('asked', { question: 'The Create account click ran, but the list still shows 6 accounts. The page says Enter a valid email. Should I change it?' }, () => 0);
+  assert.equal(long.show, 'Quick question. The Create account click ran, but the list still shows 6 accounts. The page says Enter a valid email. Should I change it?');
+  assert.equal(long.say, `[curious] ${long.show.replace('Quick question. ', 'Quick question. [break] ')}`);
+  // The reason Mo stopped is said too, and a page bubble says how to teach it.
+  assert.equal(lineFor('failed', { reason: 'I kept repeating “wait for the page”', teach: true }).show, 'I couldn\'t finish this. I kept repeating “wait for the page”. Click me to show me how.');
+  assert.equal(lineFor('error', { message: 'Mo cannot read this page' }).show, 'Something went wrong. Mo cannot read this page.');
+  assert.doesNotMatch(lineFor('asked', { question: 'Is [this] right?' }).say, /\[this\]/);
+  assert.ok(lineFor('answer', { answer: 'x'.repeat(900) }).show.length < 430);
   assert.throws(() => lineFor('nope'), /Unknown speech event/);
 });
 
