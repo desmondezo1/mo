@@ -277,6 +277,34 @@ async function answerHere({ goal, tabId, api, signal, r, call }) {
   return true;
 }
 
+// Where a run should happen: { where: 'here' | 'tab' | 'open', url, plan, matches(tab) }.
+// The model decides from the request, this page and the open tabs; if it can't be asked, a
+// site the request names ("my WhatsApp") still goes to that site.
+async function planRun(goal, tabId, api, signal, r, call) {
+  const page = await snapshot(tabId).catch(() => ({ url: '', title: '' }));
+  const tabs = (await otherTabs(tabId)).slice(0, 15).map(t => ({ title: t.title, url: new URL(t.url).origin }));
+  let plan = null;
+  try {
+    plan = await api('/api/plan', { method: 'POST', body: { goal, page: { url: page.url, title: page.title, headings: page.headings, text: page.text, screenText: page.screenText }, tabs, sessionId: r.sessionId }, signal });
+    call('usage', plan.usage, plan.ms);
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+  }
+  const site = siteInGoal(goal);
+  if (!plan && site) plan = { where: 'open', url: site.url, plan: '' };
+  if (!plan) return null;
+  r.plan = plan.plan || '';
+  if (plan.where === 'here') {
+    // Already there? Then a site the request names is this one (the model said so).
+    return plan;
+  }
+  const url = plan.url;
+  const named = site && sameSite(site.url, url) ? site.matches : null;
+  const matches = t => sameSite(t.url, url) || !!named?.(t);
+  if (matches(await chrome.tabs.get(tabId))) return { ...plan, where: 'here' };
+  return { ...plan, matches };
+}
+
 // One run of the agent on a tab. `ui` callbacks let the caller show progress
 // (the panel draws a timeline; the background lets Mo narrate):
 //   step(next) → handle, failedStep(handle), navigated(handle, url), check(check), error(message), usage(usage, ms)
@@ -302,15 +330,16 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
   };
   try {
     await send(tabId, { type: 'showme:act', action: { action: 'clear_highlight' } }).catch(() => {});
-    // A goal that names a site ("Do I have WhatsApp messages?"): go there first, to its tab if
-    // one is open, before looking at the page Mo was started on.
-    const site = siteInGoal(goal);
-    if (site && !site.matches(await chrome.tabs.get(tabId))) {
-      const went = await moveTo(site.url, site.matches);
+    // Plan first: is this the right place for the request, another open tab, or a site to
+    // open? ("Do I have WhatsApp messages?" asked on Gmail means WhatsApp, not a Gmail search.)
+    // A taught skill or a sheet row knows where it works, so it skips this.
+    const where = skill || row ? null : await planRun(goal, tabId, api, signal, r, call);
+    if (where && where.where !== 'here') {
+      const went = await moveTo(where.url, where.matches);
       const entry = went.how === 'switched'
-        ? { action: 'switch_tab', value: (await chrome.tabs.get(tabId)).url, label: went.title || site.name }
-        : { action: 'open_url', value: site.url, label: '' };
-      const handle = call('step', { ...entry, valid: true, reason: went.how === 'switched' ? 'It was already open in another tab' : 'It wasn\'t open, so I opened it' });
+        ? { action: 'switch_tab', value: (await chrome.tabs.get(tabId)).url, label: went.title || '' }
+        : { action: 'open_url', value: where.url, label: '' };
+      const handle = call('step', { ...entry, valid: true, reason: where.plan || (went.how === 'switched' ? 'It was already open in another tab' : 'It wasn\'t open, so I opened it') });
       r.history.push(entry);
       r.runSteps.push({ ...entry, handle });
     }
@@ -335,7 +364,7 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       const shot = looked ? await screenshot(tabId, page).catch(() => null) : null;
       if (shot) { r.looks++; call('looked', shot, why ? 'stuck' : 'sparse'); }
       const tabs = (await otherTabs(tabId)).slice(0, 15).map(t => ({ title: t.title, url: new URL(t.url).origin }));
-      const body = { goal, page, tabs, history: r.history, sessionId: r.sessionId, skill, ...(shot ? { screenshot: { data: shot.data, mime: shot.mime } } : {}) };
+      const body = { goal, page, tabs, plan: r.plan, history: r.history, sessionId: r.sessionId, skill, ...(shot ? { screenshot: { data: shot.data, mime: shot.mime } } : {}) };
       const next = privacyFloor(await api('/api/next-action', { method: 'POST', body, signal }), page);
       call('usage', next.usage, next.ms);
       r.decisions++;

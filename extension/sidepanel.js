@@ -1020,6 +1020,8 @@ function switchView(view) {
 }
 
 async function init() {
+  // Which Mo this is, so it's easy to tell an old copy from the current one.
+  $('version').textContent = `Mo ${chrome.runtime.getManifest().version}`;
   const saved = await chrome.storage.local.get(['server', 'goal', 'speak', 'present', 'autorun', 'looks']);
   if (saved.looks === false) $('looks').checked = false;
   $('looks').addEventListener('change', () => chrome.storage.local.set({ looks: $('looks').checked }));

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mo",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Mo, a work assistant you teach by showing it: do a repetitive browser task once and Mo does it for you from then on. Every decision runs through Mubit.",
   "action": {
     "default_title": "Open Mo"

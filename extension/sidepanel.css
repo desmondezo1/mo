@@ -353,3 +353,4 @@ input:focus-visible { border-color: var(--ember); }
 .account { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule); font-size: var(--fs-s); color: var(--slate); }
 .usage { color: var(--slate); }
 .usage.low { color: var(--brick); }
+.version { color: var(--slate); font-size: var(--fs-s); padding: 4px 2px 0; }

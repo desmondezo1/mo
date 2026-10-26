@@ -391,6 +391,29 @@ test('stuck on a page with nothing to read: Mo looks at the screen, with element
   await panel.close(); await site.close();
 });
 
+test('"Do I have any WhatsApp messages?" asked from the inbox: the plan opens WhatsApp, then uses its tab', { timeout: 90_000, skip: live }, async () => {
+  const site = await context.newPage();
+  await site.goto(`${base}/demo/inbox/`);
+  const tabId = await tabIdFor(`${base}/demo/inbox/`);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html?tabId=${tabId}`);
+  await panel.waitForSelector('#mode.mock', { timeout: 10_000 });
+  const whatsappTabs = () => worker.evaluate(() => chrome.tabs.query({}).then(ts => ts.filter(t => t.url.startsWith('https://web.whatsapp.com')).map(t => t.id)));
+  for (const round of [1, 2]) {
+    await site.bringToFront();
+    await panel.fill('#goal', 'Do I have any WhatsApp messages?');
+    await panel.click('#run');
+    await panel.waitForSelector('#verdict:not([hidden])', { timeout: 40_000 });
+    const first = await panel.$eval('#timeline li', li => li.textContent.replace(/\s+/g, ' ').trim());
+    console.log(`round ${round}:`, first);
+    assert.match(first, round === 1 ? /^open web\.whatsapp\.com/ : /^switch to/);
+    assert.equal((await whatsappTabs()).length, 1, 'one WhatsApp tab, reused the second time');
+  }
+  assert.equal(site.url(), `${base}/demo/inbox/`, 'the inbox was left alone');
+  for (const id of await whatsappTabs()) await worker.evaluate(i => chrome.tabs.remove(i), id);
+  await panel.close(); await site.close();
+});
+
 // Sheet to form: read the sheet, do row 1 on the form with two notes, check the rules, and
 // Mo adds the other nine starters. A blank Dept follows Sarah's note; "Eng" becomes Engineering.
 test('sheet to form: do row 1, Mo does the other rows', { timeout: live ? 1_200_000 : 240_000 }, async () => {

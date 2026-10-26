@@ -177,8 +177,9 @@ test('ask_human with a live provider: savings strip, cost per step, help verdict
     assert.match(r.timeline, /\$0\.0012/); // 1000 in × $1/M + 40 out × $5/M
     const savings = (await panel.textContent('#savings')).replace(/\s+/g, ' ');
     console.log('savings:', savings);
-    assert.match(savings, /This run, 1 call through Mubit/);
-    assert.match(savings, /On Claude\s*\$0\.0012/);
+    // Two calls: the plan ("here": the fake's reply has no "where") and the step.
+    assert.match(savings, /This run, 2 calls through Mubit/);
+    assert.match(savings, /On Claude\s*\$0\.0024/);
     assert.match(savings, /On an adapter \(estimate\)\s*\$0\.0001/);
     await panel.screenshot({ path: path.join(root, 'test-results', 'tools-savings.png'), fullPage: true });
 
