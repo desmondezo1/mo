@@ -143,8 +143,15 @@ export function formatDemonstration(demo, history = []) {
   return lines.join('\n');
 }
 
-export function buildNextActionMessage({ goal, page, history = [], demo }) {
+export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo }) {
   const parts = [`Goal: ${goal}`, '', formatPage(page), ''];
+  // Other tabs, so a goal about a site that's already open goes to it (open_url switches to
+  // an open tab) instead of saying "this page isn't that site".
+  if (tabs.length) {
+    parts.push('Other open tabs (open_url to one of these switches to it; if the goal is about a site not open anywhere, open_url opens it in a new tab):');
+    tabs.slice(0, 15).forEach(t => parts.push(`- ${String(t.title || '').replace(/\s+/g, ' ').slice(0, 60)} (${t.url})`));
+    parts.push('');
+  }
   parts.push('Steps already taken:');
   if (Array.isArray(history) && history.length) history.slice(-8).forEach((s, i) => parts.push(`${i + 1}. ${formatStep(s)}`));
   else parts.push('none');

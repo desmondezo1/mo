@@ -362,6 +362,7 @@ async function run(goal, { skill = null } = {}) {
       },
     });
     state.runSteps = r.runSteps.map(step => ({ ...step, li: step.handle }));
+    if (r.tabId) state.runTabId = r.tabId; // the run may have moved to another tab ("check my WhatsApp")
   }
   state.running = false;
   state.abort = null;

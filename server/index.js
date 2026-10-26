@@ -67,13 +67,13 @@ const routes = {
   },
   'GET /api/usage': async () => usage(),
 
-  'POST /api/next-action': async ({ goal, page, history, sessionId, skill }) => {
+  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill }) => {
     requireFields({ goal, page, sessionId });
     if (!Array.isArray(page.elements)) throw httpError(400, 'page.elements must be an array');
     if (history !== undefined && !Array.isArray(history)) throw httpError(400, 'history must be an array');
     history = history || [];
     const demo = recallDemo({ url: page.url, goal, skill });
-    const userMessage = buildNextActionMessage({ goal, page, history, demo });
+    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo });
     const { json, ms, requestId, usage } = await callTask({
       task: TASKS.nextAction, userMessage, sessionId, mockContext: { goal, page, history, demo },
       summarize: j => describeChoice(j, page),

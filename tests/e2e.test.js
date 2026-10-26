@@ -330,6 +330,33 @@ test('teaching keeps recording when a link opens a new tab, until you press Done
   await tab2.close(); await panel.close(); await site.close();
 });
 
+test('a site that is already open in another tab: Mo switches to it instead of navigating away', { timeout: 60_000, skip: live }, async () => {
+  // Two "sites": the helpdesk on localhost, and the inbox on 127.0.0.1, where the panel starts.
+  const desk = await context.newPage();
+  await desk.goto(`${base}/demo/helpdesk/`);
+  const other = base.replace('localhost', '127.0.0.1');
+  const inbox = await context.newPage();
+  await inbox.goto(`${other}/demo/inbox/`);
+  const inboxTab = await tabIdFor(`${other}/demo/inbox/`);
+  const deskTab = await tabIdFor(`${base}/demo/helpdesk/`);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html?tabId=${inboxTab}`);
+  await panel.waitForSelector('#mode.mock', { timeout: 10_000 });
+  await panel.fill('#goal', `Open ${base}/demo/helpdesk/ and create the account`);
+  await panel.click('#run');
+  await panel.waitForSelector('#verdict:not([hidden])', { timeout: 30_000 });
+  // The inbox stayed where it was; the run moved to the helpdesk tab, which is now in front.
+  assert.equal(inbox.url(), `${other}/demo/inbox/`);
+  const active = await worker.evaluate(id => chrome.tabs.get(id).then(t => t.active), deskTab);
+  assert.equal(active, true);
+  const steps = await panel.$$eval('#timeline li', lis => lis.map(li => li.textContent.replace(/\s+/g, ' ').trim()));
+  console.log('tab switch steps:', steps.slice(0, 3));
+  // No second helpdesk tab: it switched rather than opening the site again.
+  const deskTabs = await worker.evaluate(u => chrome.tabs.query({}).then(ts => ts.filter(t => t.url.startsWith(u)).length), `${base}/demo/helpdesk/`);
+  assert.equal(deskTabs, 1);
+  await panel.close(); await inbox.close(); await desk.close();
+});
+
 // Sheet to form: read the sheet, do row 1 on the form with two notes, check the rules, and
 // Mo adds the other nine starters. A blank Dept follows Sarah's note; "Eng" becomes Engineering.
 test('sheet to form: do row 1, Mo does the other rows', { timeout: live ? 1_200_000 : 240_000 }, async () => {

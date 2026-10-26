@@ -114,6 +114,62 @@ export function mo(tabId, state, extra = {}) {
   if (tabId) chrome.tabs.sendMessage(tabId, { type: 'showme:mo', state, ...extra }).catch(() => {});
 }
 
+// Sites people name by brand ("Do I have WhatsApp messages?"), and where each one lives.
+export const SITES = {
+  whatsapp: 'https://web.whatsapp.com/', gmail: 'https://mail.google.com/', outlook: 'https://outlook.live.com/mail/',
+  slack: 'https://app.slack.com/', linkedin: 'https://www.linkedin.com/', twitter: 'https://x.com/', facebook: 'https://www.facebook.com/',
+  instagram: 'https://www.instagram.com/', youtube: 'https://www.youtube.com/', github: 'https://github.com/', notion: 'https://www.notion.so/',
+  telegram: 'https://web.telegram.org/', messenger: 'https://www.messenger.com/', discord: 'https://discord.com/app',
+};
+const hostOf = url => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+export function sameSite(a, b) {
+  const x = hostOf(a), y = hostOf(b);
+  return !!x && !!y && (x === y || x.endsWith(`.${y}`) || y.endsWith(`.${x}`));
+}
+// The site a goal names, with a test for "this tab is on it" (any WhatsApp or Outlook host counts).
+export function siteInGoal(goal) {
+  const name = String(goal).toLowerCase().match(new RegExp(`\\b(${Object.keys(SITES).join('|')})\\b`))?.[1];
+  if (!name) return null;
+  const url = SITES[name];
+  return { name, url, matches: tab => hostOf(tab?.url).includes(name) || sameSite(tab?.url, url) };
+}
+
+// The other web pages open in the tab's window, newest first: what the agent can switch to.
+export async function otherTabs(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  return (await chrome.tabs.query({ windowId: tab.windowId }))
+    .filter(t => t.id !== tabId && isWebPage(t.url) && !t.url.startsWith(chrome.runtime.getURL('')))
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+}
+
+// Going to a site the way a person would: if it's already open in another tab, switch to that
+// tab (keeping their place in it); from a blank tab, open it there; otherwise open it in a new
+// tab beside the page they're on, so that page stays as it was.
+export async function goTo(tabId, url, matches = t => sameSite(t.url, url)) {
+  const current = await chrome.tabs.get(tabId);
+  if (!sameSite(current.url, url)) {
+    const open = (await otherTabs(tabId)).find(matches);
+    if (open) {
+      await chrome.tabs.update(open.id, { active: true });
+      const u = new URL(url);
+      if ((u.pathname.length > 1 || u.search || u.hash) && !open.url.startsWith(url)) await chrome.tabs.update(open.id, { url });
+      await sleep(400);
+      await waitForLoad(open.id, 30000);
+      return { ok: true, tabId: open.id, how: 'switched', title: open.title };
+    }
+    if (isWebPage(current.url)) {
+      const tab = await chrome.tabs.create({ url, windowId: current.windowId, index: current.index + 1, active: true });
+      await sleep(400);
+      await waitForLoad(tab.id, 30000);
+      return { ok: true, tabId: tab.id, how: 'opened' };
+    }
+  }
+  await chrome.tabs.update(tabId, { url });
+  await sleep(400);
+  await waitForLoad(tabId, 30000);
+  return { ok: true, tabId, how: 'here' };
+}
+
 // Actions the browser does itself; the rest happen inside the page.
 export async function perform(tabId, action) {
   if (action.action === 'open_url') {
@@ -151,7 +207,8 @@ export function isQuestion(goal) {
     || /^(what|when|where|who|whom|which|why|how|is|are|was|were|does|do|did|can|could|should|will|would|has|have)\b/.test(g)
     || /^(show|tell) me (where|what|when|how|which|who|if)\b/.test(g)
     || /^(highlight|point (me )?(to|at)|locate)\b/.test(g)
-    || /^find\b.*\b(on|in) (this|the) page\b/.test(g);
+    || /^find\b.*\b(on|in) (this|the) page\b/.test(g)
+    || /\b(check|see|find out|know|tell me) (if|whether)\b/.test(g);
 }
 
 // Look for the answer on the page; if it's there, scroll to it and box it.
@@ -181,8 +238,26 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
   };
   const call = (fn, ...args) => (ui[fn] ? ui[fn](...args) : undefined);
   const question = isQuestion(goal);
+  // Going somewhere can move the run to another tab; from then on it works there.
+  const moveTo = async (url, matches) => {
+    const went = await goTo(tabId, url, matches);
+    tabId = r.tabId = went.tabId;
+    return went;
+  };
   try {
     await send(tabId, { type: 'showme:act', action: { action: 'clear_highlight' } }).catch(() => {});
+    // A goal that names a site ("Do I have WhatsApp messages?"): go there first, to its tab if
+    // one is open, before looking at the page Mo was started on.
+    const site = siteInGoal(goal);
+    if (site && !site.matches(await chrome.tabs.get(tabId))) {
+      const went = await moveTo(site.url, site.matches);
+      const entry = went.how === 'switched'
+        ? { action: 'switch_tab', value: (await chrome.tabs.get(tabId)).url, label: went.title || site.name }
+        : { action: 'open_url', value: site.url, label: '' };
+      const handle = call('step', { ...entry, valid: true, reason: went.how === 'switched' ? 'It was already open in another tab' : 'It wasn\'t open, so I opened it' });
+      r.history.push(entry);
+      r.runSteps.push({ ...entry, handle });
+    }
     // Already on the page that answers it? Then there's nothing to click.
     if (question && isWebPage((await chrome.tabs.get(tabId)).url) && await answerHere({ goal, tabId, api, signal, r, call })) {
       r.finished = true;
@@ -196,7 +271,8 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       }
       const page = await snapshot(tabId);
       mo(tabId, 'thinking');
-      const next = privacyFloor(await api('/api/next-action', { method: 'POST', body: { goal, page, history: r.history, sessionId: r.sessionId, skill }, signal }), page);
+      const tabs = (await otherTabs(tabId)).slice(0, 15).map(t => ({ title: t.title, url: new URL(t.url).origin }));
+      const next = privacyFloor(await api('/api/next-action', { method: 'POST', body: { goal, page, tabs, history: r.history, sessionId: r.sessionId, skill }, signal }), page);
       call('usage', next.usage, next.ms);
       r.decisions++;
       if (!next.valid) r.invalid++;
@@ -219,7 +295,7 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
 
       const before = (await chrome.tabs.get(tabId)).url;
       mo(tabId, 'acting', { targetId: next.element_id, text: describeAction(next) });
-      const result = await perform(tabId, next);
+      const result = next.action === 'open_url' ? await moveTo(next.value) : await perform(tabId, next);
       if (!result.ok) { r.failure = result.error; call('failedStep', handle); break; }
       // A click on a checkbox says which way it went, as Ada's recorded steps do.
       const box = next.action === 'click' && next.role === 'checkbox' ? page.elements.find(e => e.id === next.element_id) : null;
