@@ -10,7 +10,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'showme-features-'));
 Object.assign(process.env, { SHOWME_DATA_DIR: dir, SHOWME_MOCK: '1', MUBIT_API_KEY: '' });
 
 const { findDetours, forTraining } = await import('../server/refine.js');
-const { isQuestion } = await import('../extension/agent-core.js');
+const { isQuestion, siteInGoal, sameSite } = await import('../extension/agent-core.js');
+const { buildNextActionMessage } = await import('../server/prompts.js');
 const { createServer } = await import('../server/index.js');
 
 const at = url => ({ url, elements: [] });
@@ -48,6 +49,23 @@ test('questions are told apart from tasks', () => {
     assert.equal(isQuestion(q), true, q);
   for (const t of ['Book a table for two at eight', 'Open YouTube and play a Burna Boy video', 'find running shoes on Amazon'])
     assert.equal(isQuestion(t), false, t);
+});
+
+test('a goal that names a site finds its tab, or where to open it', () => {
+  assert.equal(isQuestion('I want to check if I have WhatsApp messages'), true);
+  const wa = siteInGoal('Do I have WhatsApp messages? Can you help me check');
+  assert.equal(wa.url, 'https://web.whatsapp.com/');
+  assert.equal(wa.matches({ url: 'https://web.whatsapp.com/' }), true);
+  assert.equal(wa.matches({ url: 'https://mail.google.com/mail/u/0/' }), false);
+  assert.equal(siteInGoal('Any new mail in Outlook?').matches({ url: 'https://outlook.office.com/mail/' }), true);
+  assert.equal(siteInGoal('Book a table for two at eight'), null);
+  assert.equal(sameSite('https://www.linkedin.com/feed/', 'https://linkedin.com/'), true);
+  assert.equal(sameSite('https://mail.google.com/', 'https://calendar.google.com/'), false);
+  // The model sees the other tabs (titles and sites only) and how to reach them.
+  const msg = buildNextActionMessage({ goal: 'Reply to Ada', page: { url: 'https://mail.google.com/', elements: [] }, tabs: [{ title: '(3) WhatsApp', url: 'https://web.whatsapp.com' }] });
+  assert.match(msg, /Other open tabs \(open_url to one of these switches to it/);
+  assert.match(msg, /- \(3\) WhatsApp \(https:\/\/web\.whatsapp\.com\)/);
+  assert.doesNotMatch(buildNextActionMessage({ goal: 'G', page: { url: 'https://a.example/', elements: [] } }), /Other open tabs/);
 });
 
 let server, base;
