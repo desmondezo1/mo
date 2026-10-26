@@ -6,7 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadEnv } from './env.js';
-import { TASKS, buildNextActionMessage, buildDoneCheckMessage, buildSafetyMessage, buildLocateMessage, buildRefineMessage } from './prompts.js';
+import { TASKS, buildPlanMessage, buildNextActionMessage, buildDoneCheckMessage, buildSafetyMessage, buildLocateMessage, buildRefineMessage } from './prompts.js';
 import { findDetours, forTraining } from './refine.js';
 import { callTask, getConfig, LlmError } from './llm.js';
 import { formatStep } from './prompts.js';
@@ -67,14 +67,26 @@ const routes = {
   },
   'GET /api/usage': async () => usage(),
 
-  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill, screenshot }) => {
+  // The first step of a run: is this the right page for the request, another open tab, or a
+  // site to open? A wrong or unreadable answer means "here", so the run goes on as before.
+  'POST /api/plan': async ({ goal, page, tabs, sessionId }) => {
+    requireFields({ goal, page, sessionId });
+    tabs = Array.isArray(tabs) ? tabs.filter(t => t && typeof t.url === 'string').slice(0, 15) : [];
+    const { json, ms, requestId, usage } = await callTask({
+      task: TASKS.plan, userMessage: buildPlanMessage({ goal, page, tabs }), sessionId, mockContext: { goal, page, tabs },
+      summarize: j => `${j.where}${j.url ? ` ${j.url}` : ''}: ${j.plan || ''}`,
+    });
+    return { ...normalisePlan(json, tabs), ms, requestId, usage };
+  },
+
+  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill, screenshot, plan }) => {
     requireFields({ goal, page, sessionId });
     if (!Array.isArray(page.elements)) throw httpError(400, 'page.elements must be an array');
     if (history !== undefined && !Array.isArray(history)) throw httpError(400, 'history must be an array');
     history = history || [];
     const demo = recallDemo({ url: page.url, goal, skill });
     const image = screenshotOf(screenshot);
-    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo, screenshot: !!image });
+    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo, screenshot: !!image, plan: typeof plan === 'string' ? plan.slice(0, 300) : '' });
     const { json, ms, requestId, usage } = await callTask({
       task: TASKS.nextAction, userMessage, sessionId, mockContext: { goal, page, history, demo }, image,
       summarize: j => `${describeChoice(j, page)}${image ? ' (looked at the screen)' : ''}`,
@@ -402,6 +414,21 @@ export function normaliseAction(json, page) {
     action, element_id: element ? elementId : '', value, submit: json.submit === true,
     reason: String(json.reason || ''), label: element?.label ?? null, role: element?.role ?? null, valid,
   };
+}
+
+// The plan's address must be a web address; "tab" must name one of the open tabs.
+export function normalisePlan(json, tabs = []) {
+  const plan = String(json.plan || '').slice(0, 300);
+  let where = ['here', 'tab', 'open'].includes(json.where) ? json.where : 'here';
+  let url = String(json.url || '').trim();
+  if (where !== 'here') {
+    if (url && !/^[a-z]+:/i.test(url)) url = `https://${url}`;
+    let ok = false;
+    try { ok = ['http:', 'https:'].includes(new URL(url).protocol); } catch { /* not a URL */ }
+    if (!ok) { where = 'here'; url = ''; }
+    else if (where === 'tab' && !tabs.some(t => { try { return new URL(t.url).host === new URL(url).host; } catch { return false; } })) where = 'open';
+  } else url = '';
+  return { where, url, plan };
 }
 
 // A screenshot from the extension: a JPEG or PNG, at most ~1 MB.

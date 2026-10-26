@@ -80,6 +80,21 @@ test('a look at the screen goes to the model as an image, before the text', asyn
   assert.doesNotMatch(buildNextActionMessage({ goal: 'G', page }), /screenshot/);
 });
 
+test('the plan picks where a request belongs; a bad answer means "here"', async () => {
+  const { normalisePlan } = await import('../server/index.js');
+  const { buildPlanMessage, SYSTEM_PROMPTS } = await import('../server/prompts.js');
+  const tabs = [{ title: 'Slack', url: 'https://app.slack.com' }];
+  assert.deepEqual(normalisePlan({ where: 'open', url: 'web.whatsapp.com', plan: 'Check chats' }, tabs), { where: 'open', url: 'https://web.whatsapp.com', plan: 'Check chats' });
+  assert.equal(normalisePlan({ where: 'tab', url: 'https://app.slack.com/client' }, tabs).where, 'tab');
+  assert.equal(normalisePlan({ where: 'tab', url: 'https://linear.app' }, tabs).where, 'open', 'a tab that is not open is opened');
+  assert.equal(normalisePlan({ where: 'open', url: 'javascript:alert(1)' }, tabs).where, 'here');
+  assert.equal(normalisePlan({ where: 'elsewhere' }, tabs).where, 'here');
+  const msg = buildPlanMessage({ goal: 'Do I have any WhatsApp messages?', page: { url: 'https://mail.google.com/mail/u/0/#inbox', title: 'Inbox (3) - Gmail', text: 'Your WhatsApp code is 123' }, tabs });
+  assert.match(msg, /^Request: Do I have any WhatsApp messages\?/);
+  assert.match(msg, /- Slack \(https:\/\/app\.slack\.com\)/);
+  assert.match(SYSTEM_PROMPTS.plan, /not by words that happen to appear on the page/);
+});
+
 let server, base;
 before(async () => { server = createServer(); await new Promise(r => server.listen(0, r)); base = `http://localhost:${server.address().port}`; });
 after(() => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); });

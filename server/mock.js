@@ -220,6 +220,15 @@ function safetyGate({ goal, element }) {
 // (or holding the text a human pointed out).
 const WORDS_TO_SKIP = new Set(['what', 'when', 'where', 'which', 'does', 'this', 'that', 'with', 'have', 'there', 'their', 'your', 'show', 'page', 'they', 'from', 'about', 'tell']);
 const words = s => String(s).toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2 && !WORDS_TO_SKIP.has(w));
+// Plan: a chat app the request names, in its open tab or opened; anything else stays here.
+const APPS = { whatsapp: 'https://web.whatsapp.com', telegram: 'https://web.telegram.org' };
+function plan({ goal, page, tabs = [] }) {
+  const app = Object.keys(APPS).find(a => goal.toLowerCase().includes(a));
+  if (!app || String(page.url).startsWith(APPS[app])) return { where: 'here', url: '', plan: 'Do it on this page' };
+  const tab = tabs.find(t => t.url.startsWith(APPS[app]));
+  return tab ? { where: 'tab', url: tab.url, plan: `Use the open ${app} tab` } : { where: 'open', url: `${APPS[app]}/`, plan: `Open ${app} and look there` };
+}
+
 function locate({ goal, page, hint }) {
   const blocks = page.blocks || [];
   if (hint) {
@@ -245,6 +254,7 @@ export function mockAnswer(task, context) {
   if (task === TASKS.doneCheck) return doneCheck(context);
   if (task === TASKS.safetyGate) return safetyGate(context);
   if (task === TASKS.locate) return locate(context);
+  if (task === TASKS.plan) return plan(context);
   // Link check: what a reviewer said wins; otherwise the rule-based score decides.
   if (task === TASKS.linkCheck) {
     const s = context.signals;

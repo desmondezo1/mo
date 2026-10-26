@@ -10,6 +10,7 @@ export const TASKS = {
   locate: 'locate',
   refineLesson: 'refine-lesson',
   linkCheck: 'link-check',
+  plan: 'plan',
 };
 
 export const SYSTEM_PROMPTS = {
@@ -19,6 +20,14 @@ export const SYSTEM_PROMPTS = {
     'Reply with JSON only, no prose: {"verdict":"safe"|"suspicious"|"phishing","pretends_to_be":"<the real domain it imitates, or empty>"}',
     'Say phishing when the link imitates a known brand or service (a look-alike spelling, the brand\'s name on any other domain including free website builders, or link text showing a different site) to collect logins, payments or personal details.',
     'Say suspicious when a page on free hosting or a throwaway domain uses words like login, verify, account or wallet, or shows another sign of deception without a clear imitation. Link shorteners, email tracking links, personal or project pages, home router addresses and ordinary sites are safe unless something else is wrong. A well-known site\'s own domain is safe. Signals are hints, not proof.',
+  ].join('\n'),
+
+  // Before the agent touches anything: where does this request belong?
+  [TASKS.plan]: [
+    'You plan a browser task before an agent starts on it. You get the user\'s request, the page the browser is on, and the other open tabs.',
+    'Decide where the request has to be done: "here" (this page or site is the right place), "tab" (one of the other open tabs is), or "open" (no open tab is: name the site\'s web address).',
+    'Judge by what the request is about, not by words that happen to appear on the page. A question about messages in a chat app is answered in that app, not by searching email for the app\'s name; a request about "this page" or what is on screen stays here.',
+    'Reply with JSON only, no prose: {"where":"here"|"tab"|"open","url":"<for tab: its address from the list; for open: the full https address of the site\'s web app; for here: empty>","plan":"<one short sentence: what to do there>"}',
   ].join('\n'),
 
   [TASKS.locate]: [
@@ -143,8 +152,22 @@ export function formatDemonstration(demo, history = []) {
   return lines.join('\n');
 }
 
-export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo, screenshot = false }) {
+export function buildPlanMessage({ goal, page, tabs = [] }) {
+  const parts = [`Request: ${goal}`, '', 'Current page:', `URL: ${page.url}`];
+  if (page.title) parts.push(`Title: ${page.title}`);
+  if (page.headings?.length) parts.push(`Headings: ${page.headings.slice(0, 5).join(' | ')}`);
+  const text = (page.screenText || page.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (text) parts.push(`Text: ${text}`);
+  parts.push('', 'Other open tabs:');
+  if (tabs.length) tabs.slice(0, 15).forEach(t => parts.push(`- ${String(t.title || '').replace(/\s+/g, ' ').slice(0, 60)} (${t.url})`));
+  else parts.push('none');
+  parts.push('', 'Answer with one JSON object only.');
+  return parts.join('\n');
+}
+
+export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo, screenshot = false, plan = '' }) {
   const parts = [`Goal: ${goal}`, '', formatPage(page), ''];
+  if (plan) parts.splice(1, 0, `Plan: ${plan}`);
   if (screenshot) parts.push('A screenshot of the visible part of the page is attached. Each listed element on screen has a pink box with its id: use it to see what the text list misses (layout, icons, what is covered or greyed out), and still answer with an element id from the list.', '');
   // Other tabs, so a goal about a site that's already open goes to it (open_url switches to
   // an open tab) instead of saying "this page isn't that site".
