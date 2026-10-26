@@ -5,11 +5,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { userDataDir } from './account.js';
 
+// Each user's skills and lessons live in their own folder (see account.js).
 function demosFile() {
-  const dir = process.env.SHOWME_DATA_DIR || path.resolve(import.meta.dirname, '..', 'data');
-  fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, 'demos.json');
+  return path.join(userDataDir(), 'demos.json');
 }
 
 export function pageKey(url) {

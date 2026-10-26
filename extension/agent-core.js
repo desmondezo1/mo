@@ -2,6 +2,8 @@
 // and the background worker (voice runs while the panel is closed). Everything here uses
 // only chrome.tabs / chrome.scripting / fetch, which both places have.
 
+import { accessToken } from './auth-core.js';
+
 export const MAX_STEPS = 30;
 export const RISKY = /pay|purchase|buy now|place order|delete|remove|transfer|send|submit|confirm|reserve|book/i;
 
@@ -18,14 +20,16 @@ export async function getServer() {
   return (server || 'http://localhost:8787').replace(/\/$/, '');
 }
 
+// Every call carries the user's sign-in when the server needs one (see auth-core.js).
 export function createApi(serverOf) {
   return async function api(path, { method = 'GET', body, signal } = {}) {
     const server = await serverOf();
+    const token = await accessToken(server);
     let res;
     try {
       res = await fetch(`${server}${path}`, {
         method,
-        headers: body ? { 'content-type': 'application/json' } : undefined,
+        headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal,
       });
@@ -34,6 +38,11 @@ export function createApi(serverOf) {
       throw new InfraError(`Backend offline at ${server}. Start it with: npm start`);
     }
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && data.code === 'signed_out') {
+      await chrome.storage.local.remove('moSession');
+      chrome.runtime.sendMessage({ type: 'mo:signed-out' }).catch(() => {});
+      throw Object.assign(new InfraError('Sign in to Mo to continue.'), { signedOut: true });
+    }
     if (!res.ok && data.agentError) throw new Error(`I gave an answer I couldn't act on (${data.error.slice(0, 120)}…)`);
     if (!res.ok) throw new InfraError(data.error || `${res.status} ${res.statusText}`);
     return data;

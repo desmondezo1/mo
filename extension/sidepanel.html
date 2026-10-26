@@ -24,9 +24,33 @@
         <label class="toggle"><input type="checkbox" id="autorun" checked><span>Run when I stop speaking</span></label>
         <label class="toggle"><input type="checkbox" id="speak" checked><span>Talk back</span></label>
         <label class="toggle"><input type="checkbox" id="present"><span>Present mode (larger text)</span></label>
+        <div id="account" class="account" hidden><span id="account-email"></span><button id="sign-out" class="text-btn">Sign out</button></div>
       </div>
     </div>
   </header>
+
+  <!-- Hosted Mo: sign in first. Hidden when the server needs no sign-in (local mode). -->
+  <section id="signin" class="signin" hidden>
+    <div class="signin-card">
+      <h1>Sign in to Mo</h1>
+      <p>Mo learns your repetitive browser tasks from one demonstration, then does them for you. Your skills are saved to your account.</p>
+      <button id="signin-google" class="btn primary wide">Continue with Google</button>
+      <div class="or"><span>or</span></div>
+      <div id="signin-email-step">
+        <label class="field-label" for="signin-email">Work email</label>
+        <input id="signin-email" type="email" placeholder="you@company.com" autocomplete="email">
+        <button id="signin-send" class="btn quiet wide">Email me a code</button>
+      </div>
+      <div id="signin-code-step" hidden>
+        <label class="field-label" for="signin-code">The 6-digit code we emailed you</label>
+        <input id="signin-code" type="text" inputmode="numeric" placeholder="123456" autocomplete="one-time-code">
+        <button id="signin-verify" class="btn primary wide">Sign in</button>
+        <button id="signin-back" class="text-btn">Use a different email</button>
+      </div>
+      <p id="signin-error" class="signin-error" role="alert"></p>
+      <p class="signin-small">Mo sends the text of the page it's working on to an AI model to decide each step. It never records passwords.</p>
+    </div>
+  </section>
 
   <nav class="tabs" role="tablist">
     <button role="tab" class="tab active" data-view="agent" aria-selected="true">Agent</button>
@@ -148,6 +172,7 @@
       <ol id="skill-list" class="skill-list"><li class="empty">Nothing taught yet. When Mo gets something wrong, show it once.</li></ol>
       <footer class="memory">
         <span id="memory-count">Loading lessons…</span>
+        <span id="usage" class="usage" hidden></span>
         <button id="forget" class="text-btn">Forget lessons</button>
       </footer>
     </section>

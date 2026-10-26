@@ -2,6 +2,8 @@
 // corrections become training data. Fed by the backend's event stream (/api/events)
 // plus a full refresh (/api/overview) after each event.
 
+import { accessToken } from './auth-core.js';
+
 const $ = id => document.getElementById(id);
 export const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 export const fmtUsd = n => (n == null ? '—' : n >= 1 ? `$${n.toFixed(2)}` : n >= 0.01 ? `$${n.toFixed(3)}` : `$${n.toFixed(4)}`);
@@ -26,9 +28,11 @@ export function createMubitView({ api, getServer, onOverview = () => {} }) {
   let overview = null;
   let bridge = null;
 
-  function connect() {
+  async function connect() {
     source?.close();
-    source = new EventSource(`${getServer()}/api/events`);
+    // EventSource can't send headers, so a hosted server gets the sign-in as ?token=.
+    const token = await accessToken(getServer());
+    source = new EventSource(`${getServer()}/api/events${token ? `?token=${encodeURIComponent(token)}` : ''}`);
     source.addEventListener('call', e => {
       const call = JSON.parse(e.data);
       addCall(call, true);

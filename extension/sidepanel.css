@@ -337,3 +337,18 @@ input:focus-visible { border-color: var(--ember); }
 .batch-rows li.bad .mark { color: var(--brick); }
 .batch-rows .why { display: block; color: var(--slate); font-size: var(--fs-xs); }
 .batch-ask { margin: 8px 0; }
+
+/* Sign-in (hosted Mo) */
+.signin { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: var(--paper); }
+.signin-card { width: 100%; max-width: 360px; }
+.signin-card h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.02em; }
+.signin-card p { margin: 0 0 16px; color: var(--slate); font-size: var(--fs-s); }
+.btn.wide { width: 100%; justify-content: center; margin-top: 8px; }
+.signin .or { display: flex; align-items: center; gap: 10px; margin: 16px 0 8px; color: var(--slate); font-size: var(--fs-xs); }
+.signin .or::before, .signin .or::after { content: ''; flex: 1; height: 1px; background: var(--rule); }
+.signin input { width: 100%; margin: 4px 0 4px; }
+.signin-error { color: var(--brick); min-height: 18px; margin-top: 10px !important; }
+.signin-small { font-size: var(--fs-xs) !important; margin-top: 18px !important; }
+.account { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule); font-size: var(--fs-s); color: var(--slate); }
+.usage { color: var(--slate); }
+.usage.low { color: var(--brick); }
