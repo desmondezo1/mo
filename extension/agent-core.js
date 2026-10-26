@@ -369,7 +369,8 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       const entry = { action: next.action, label: next.label, role: next.role, value, submit: next.submit, element_id: next.element_id };
       r.history.push(entry);
       r.runSteps.push({ ...entry, handle });
-      await sleep(next.action === 'wait' ? 1500 : 600);
+      // Waits grow (1.5 s, 3 s, 4.5 s, 6 s): a slow app like WhatsApp Web can take 15 s to load.
+      await sleep(next.action === 'wait' ? 1500 * Math.min(4, r.history.filter(h => h.action === 'wait').length) : 600);
       const after = await waitForLoad(tabId).catch(() => null);
       if (after && after.url !== before) call('navigated', handle, after.url);
     }

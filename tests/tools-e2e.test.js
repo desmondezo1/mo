@@ -338,9 +338,40 @@ test('late waveform updates from an ended session are ignored', { timeout: 30_00
   await site.close();
 });
 
+// What the offscreen page last said, once it has said something.
+async function waitForSaid() {
+  for (let i = 0; i < 50; i++) {
+    const { lastSaid } = await worker.evaluate(() => chrome.storage.session.get('lastSaid'));
+    if (lastSaid) return lastSaid;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  throw new Error('Mo said nothing');
+}
+
+test('the panel says its reply out loud', { timeout: 60_000 }, async () => {
+  await worker.evaluate(() => chrome.storage.session.remove('lastSaid'));
+  const { site, tabId } = await tabAt(`${base}/demo/helpdesk/`);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html?tabId=${tabId}`);
+  await panel.waitForSelector('#mode.mock', { timeout: 10_000 });
+  await panel.click('#more');
+  await panel.check('#speak');
+  await panel.click('#more');
+  await panel.fill('#goal', 'Book a table on the moon');
+  await panel.click('#run');
+  await panel.waitForSelector('#verdict:not([hidden])', { timeout: 30_000 });
+  const said = await waitForSaid();
+  console.log('panel said:', said);
+  assert.notEqual(said.how, 'failed', said.error);
+  assert.ok(said.text.length > 5);
+  await worker.evaluate(() => chrome.storage.local.set({ speak: false }));
+  await panel.close(); await site.close();
+});
+
 test('with the side panel closed, holding ⌥Space listens offscreen and Mo runs the goal', { timeout: 60_000 }, async () => {
   const goal = `open ${base}/demo/tube/ and play a Wizkid video`;
-  await worker.evaluate(g => chrome.storage.local.set({ voiceTestScript: [[150, 'open the tube', false], [500, g, true]] }), goal);
+  await worker.evaluate(g => chrome.storage.local.set({ voiceTestScript: [[150, 'open the tube', false], [500, g, true]], speak: true }), goal);
+  await worker.evaluate(() => chrome.storage.session.remove('lastSaid'));
   try {
     for (const p of context.pages().filter(p => p.url().includes('sidepanel.html'))) await p.close();
     const { site } = await tabAt(`${base}/demo/tube/`);
@@ -358,8 +389,14 @@ test('with the side panel closed, holding ⌥Space listens offscreen and Mo runs
     console.log('offscreen voice states:', [...seen]);
     assert.ok(seen.has('listening'), 'waveform showed while held');
     assert.equal(context.pages().filter(p => p.url().includes('sidepanel.html')).length, 0, 'the panel was not opened');
+    // With the panel closed, Mo still says what its bubble shows, out loud.
+    const said = await waitForSaid();
+    console.log('background said:', said);
+    assert.match(said.text, /done/i);
+    assert.notEqual(said.how, 'failed', said.error);
     await site.close();
   } finally {
+    await worker.evaluate(() => chrome.storage.local.set({ speak: false }));
     await worker.evaluate(() => chrome.storage.local.remove('voiceTestScript'));
   }
 });

@@ -43,8 +43,8 @@ async function ensureOffscreen() {
   if (!existing.length) {
     await chrome.offscreen.createDocument({
       url: 'voice.html',
-      reasons: ['USER_MEDIA'],
-      justification: 'Listen to a spoken instruction while the talk key or Mo is held',
+      reasons: ['USER_MEDIA', 'AUDIO_PLAYBACK'],
+      justification: 'Listen to a spoken instruction while the talk key or Mo is held, and say Mo\'s reply',
     });
   } else {
     markOffscreenReady();
@@ -85,22 +85,44 @@ function voiceEnd(kind) {
   });
 }
 
+// Mo's reply when the panel is closed: shown in its bubble on the page and, with Talk back on,
+// said out loud, the same words. A service worker can't play sound, so the offscreen page does.
+async function respond(tabId, event, data, moState, { fallbackText = '', ...extra } = {}) {
+  const talk = (await chrome.storage.local.get('speak')).speak !== false;
+  const line = await api('/api/speak', { method: 'POST', body: { event, data, voice: talk } }).catch(() => null);
+  const show = line?.show || fallbackText;
+  mo(tabId, moState, { ...extra, text: show });
+  if (talk && show) sayAloud({ audio: line?.audio || null, mime: line?.mime, text: show });
+}
+
+// Every spoken reply plays in the offscreen page, which Chrome lets play sound at any time;
+// the side panel sends its lines here too, so a reply that comes after a long run isn't
+// blocked as autoplay. The page reports how it went ("fish", "system" or "failed").
+async function sayAloud({ audio, mime, text }) {
+  await ensureOffscreen();
+  chrome.runtime.sendMessage({ target: 'offscreen', type: 'say', audio, mime, text }).catch(() => {});
+}
+
 // A voice goal while the side panel is closed: run it here; Mo shows each step.
 async function runHeadless(tabId, goal) {
-  if (headless) return mo(tabId, 'idle', { text: 'I\'m still working on the last one.', hold: 3000 });
+  if (headless) return respond(tabId, 'busy', {}, 'idle', { hold: 3000, fallbackText: 'I\'m still working on the last one.' });
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) return;
   headless = { tabId, goal, startUrl: tab.url };
   try {
     const r = await runAgent({ goal, tabId, api, looks: (await chrome.storage.local.get('looks')).looks !== false });
+    tabId = r.tabId || tabId; // the run may have moved to another tab ("check my WhatsApp")
     if (r.outcome === 'done') {
-      mo(tabId, 'success', r.answer ? { text: r.answer, hold: 10000 } : { text: r.usedLesson ? 'Done, using what you taught me!' : 'Done!' });
+      if (r.answer) respond(tabId, 'answer', { answer: r.answer }, 'success', { hold: 10000, fallbackText: r.answer });
+      else respond(tabId, r.usedLesson ? 'doneWithLesson' : 'done', {}, 'success', { fallbackText: 'Done!' });
     } else if (r.outcome === 'failed' || r.outcome === 'asked') {
       // Teaching needs the panel: keep what's needed so it can pick up from here.
       await chrome.storage.session.set({ pendingTeach: { goal, tabId, startUrl: headless.startUrl, failure: r.failure, at: Date.now() } });
-      mo(tabId, 'stuck', { action: 'teach', text: `${r.asked ? r.failure : `I couldn't finish: ${r.failure}`} Click here to show me how.` });
+      const question = r.failure.replace(/^I need help: /, '');
+      respond(tabId, r.asked ? 'asked' : 'failed', r.asked ? { question, teach: true } : { reason: r.failure, teach: true }, 'stuck',
+        { action: 'teach', fallbackText: `${r.asked ? question : `I couldn't finish: ${r.failure}`} Click me to show me how.` });
     } else if (r.outcome === 'error') {
-      mo(tabId, 'idle', { text: `Something went wrong: ${r.failure}`, hold: 6000 });
+      respond(tabId, 'error', { message: r.failure }, 'idle', { hold: 6000, fallbackText: `Something went wrong: ${r.failure}` });
     }
   } finally {
     headless = null;
@@ -142,6 +164,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       mo(tabId, rest.state, rest);
       break;
     }
+    // Mo's voice: the panel's lines, and how the offscreen page played them.
+    case 'mo:say': sayAloud(msg); break;
+    case 'mo:hush': chrome.runtime.sendMessage({ target: 'offscreen', type: 'hush' }).catch(() => {}); break;
+    case 'voice:said': chrome.storage.session.set({ lastSaid: { text: msg.text, how: msg.how, error: msg.error || null, at: Date.now() } }); break;
     case 'guard:report': chrome.tabs.sendMessage(tabId, { type: 'guard:report-page' }).catch(() => {}); break;
 
     case 'showme:open-panel':

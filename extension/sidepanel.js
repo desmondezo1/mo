@@ -234,43 +234,21 @@ function renderSavings() {
 // Every reply is written once by the server with Fish Audio cues ("[pleased] All done!"):
 // Mo speaks the cued version and shows the clean one ("All done!"). See
 // .claude/skills/mo-voice/SKILL.md. With Talk back off, Mo only shows the text.
-let speechAudio = null;
-
-// The best voice this computer has, for when Fish Audio isn't available.
-function systemSpeak(text) {
-  if (!text || !window.speechSynthesis) return;
-  const voices = speechSynthesis.getVoices().filter(v => /^en(-|_|$)/i.test(v.lang));
-  const best = voices.find(v => /premium|enhanced|natural|neural/i.test(v.name))
-    || voices.find(v => /google (uk|us) english/i.test(v.name)) || voices.find(v => /samantha|ava|daniel|serena/i.test(v.name)) || voices[0];
-  const u = new SpeechSynthesisUtterance(text);
-  if (best) u.voice = best;
-  u.rate = 1.03;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-}
-
 function stopSpeaking() {
-  speechAudio?.pause();
-  speechAudio = null;
-  window.speechSynthesis?.cancel();
+  chrome.runtime.sendMessage({ type: 'mo:hush' }).catch(() => {});
 }
 
 // respond('done'): show Mo's line in its bubble (moState, e.g. 'success') and, with Talk back
-// on, say it. fallbackText is shown if the server can't be reached.
+// on, say it: the same words, played by the extension's offscreen page (Fish Audio's voice,
+// or this computer's best voice), so a reply after a long run isn't blocked as autoplay.
+// fallbackText is shown, and said, if the server can't be reached.
 async function respond(event, data = {}, moState = null, { fallbackText = '', tabId = null, ...moExtra } = {}) {
   const talk = $('speak').checked;
   let line = null;
   try { line = await api('/api/speak', { method: 'POST', body: { event, data, voice: talk } }); } catch { /* fall back below */ }
   const show = line?.show || fallbackText;
   if (moState) mo(moState, { ...moExtra, text: show }, tabId);
-  if (!talk || !show) return line;
-  stopSpeaking();
-  if (line?.audio) {
-    speechAudio = new Audio(`data:${line.mime || 'audio/mpeg'};base64,${line.audio}`);
-    speechAudio.play().catch(() => systemSpeak(show));
-  } else {
-    systemSpeak(show);
-  }
+  if (talk && show) chrome.runtime.sendMessage({ type: 'mo:say', audio: line?.audio || null, mime: line?.mime, text: show }).catch(() => {});
   return line;
 }
 
@@ -381,13 +359,13 @@ async function run(goal, { skill = null } = {}) {
     $('run-session').innerHTML = `In Mubit: filter Requests by session <button class="copy" data-copy="${esc(r.sessionId)}">${esc(r.sessionId)}</button> to see every decision from this run.`;
   }
   note(outcome === 'done' ? (usedLesson ? 'rerun-done' : 'done') : outcome === 'failed' || outcome === 'asked' ? 'fail' : outcome);
-  if (failure && infra) mo('idle', { text: 'Something went wrong. Check Mo\'s panel.', hold: 5000 });
+  if (failure && infra) respond('error', { message: failure }, 'idle', { hold: 6000, fallbackText: `Something went wrong: ${failure}` });
   if (failure) {
     setVerdict(false, failure === 'Stopped.' ? 'Stopped' : infra ? 'Error — not the agent\'s fault, so nothing to teach' : asked ? 'Asked for help' : 'Failed');
     if (failure !== 'Stopped.' && !infra) {
       offerTeaching(failure);
       const question = failure.replace(/^I need help: /, '');
-      respond(asked ? 'asked' : 'failed', { question }, 'stuck', { fallbackText: asked ? `I need help: ${question}` : 'I couldn\'t finish this. Can you show me how?' });
+      respond(asked ? 'asked' : 'failed', asked ? { question } : { reason: failure }, 'stuck', { fallbackText: asked ? `I need help: ${question}` : `I couldn't finish: ${failure} Can you show me how?` });
     }
   } else if (r.answer) {
     setVerdict(true, 'Found it ✓');

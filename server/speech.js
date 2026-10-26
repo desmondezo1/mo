@@ -19,18 +19,30 @@ export const spokenAndShown = line => ({ say: line.trim(), show: stripCues(line)
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
 const say = n => (Number.isInteger(n) && n >= 0 && n <= 20 ? WORDS[n] : String(n));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
-// Spoken details stay short: the first sentence, at most ~160 characters.
-const brief = (s, max = 160) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); const first = t.match(/^.*?[.?!](\s|$)/)?.[0]?.trim() || t; return first.length > max ? `${first.slice(0, max - 1).trim()}…` : first; };
+// What Mo shows is what it says: a detail is spoken in full (up to ~400 characters, a few
+// sentences), ending as a sentence, with no stray brackets that Fish would read as a cue.
+const full = (s, max = 400) => {
+  let t = String(s || '').replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim();
+  if (t.length > max) t = `${(t.slice(0, max).match(/^.*[.?!](?=\s)/)?.[0] || t.slice(0, max - 1)).trim()}…`;
+  return t && !/[.?!…]$/.test(t) ? `${t}.` : t;
+};
+// "Click me" when the bubble on the page starts teaching (runs started by voice, panel closed).
+const showMe = teach => (teach ? 'Click me to show me how.' : 'Can you show me how?');
 
 // Two or three versions per moment, so repeated runs don't sound canned.
 const LINES = {
   done: () => ['[pleased] All done!', '[pleased] Done!', '[pleased] All done. [break] That worked.'],
   doneWithLesson: () => ['[warm] Done, the way you showed me.', '[pleased] All done, just like you taught me.'],
-  failed: () => ['[apologetic] I got stuck on this one. [break] Can you show me how?', '[apologetic] I couldn\'t finish this. [break] Can you show me how you\'d do it?'],
-  asked: ({ question }) => [`[curious] Quick question. [break] ${brief(question)}`, `[apologetic] I need a hand. [break] ${brief(question)}`],
-  answer: ({ answer }) => [`[warm] Found it. [break] ${brief(answer, 200)}`, `[pleased] Here it is. [break] ${brief(answer, 200)}`],
+  failed: ({ reason, teach }) => (reason
+    ? [`[apologetic] I couldn't finish this. [break] ${full(reason)} [break] ${showMe(teach)}`]
+    : [`[apologetic] I got stuck on this one. [break] ${showMe(teach)}`, `[apologetic] I couldn't finish this. [break] ${showMe(teach)}`]),
+  asked: ({ question, teach }) => [`[curious] Quick question. [break] ${full(question)}${teach ? ` [break] ${showMe(teach)}` : ''}`,
+    `[apologetic] I need a hand. [break] ${full(question)}${teach ? ` [break] ${showMe(teach)}` : ''}`],
+  answer: ({ answer }) => [`[warm] Found it. [break] ${full(answer)}`, `[pleased] Here it is. [break] ${full(answer)}`],
+  error: ({ message }) => [`[apologetic] Something went wrong. [break] ${full(message || 'Check my panel.')}`],
+  busy: () => ['[gentle] I\'m still working on the last one.'],
   watching: () => ['[warm] I\'m watching. [break] Show me how.', '[curious] Okay, I\'m watching. [break] Go ahead.'],
-  learned: ({ skill }) => (skill ? [`[pleased] Got it. [break] I've learned how to ${String(skill).replace(/^\w/, c => c.toLowerCase())}.`, `[pleased] Thanks! [break] I'll remember ${brief(skill, 60)}.`] : ['[pleased] Got it. [break] I\'ll do it your way from now on.']),
+  learned: ({ skill }) => (skill ? [`[pleased] Got it. [break] I've learned how to ${String(skill).replace(/^\w/, c => c.toLowerCase())}.`, `[pleased] Thanks! [break] I'll remember ${full(skill, 60).replace(/\.$/, '')}.`] : ['[pleased] Got it. [break] I\'ll do it your way from now on.']),
   batch: ({ ok = 0, failed = 0 }) => (failed
     ? [`[pleased] ${cap(say(ok))} done. [break] [gentle] ${cap(say(failed))} ${failed === 1 ? 'needs' : 'need'} a look.`]
     : [`[excited] All ${say(ok)} done!`, `[excited] That's all ${say(ok)} done!`]),
