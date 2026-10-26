@@ -151,6 +151,7 @@ body:has(.pill.down) .live-dot { background: var(--brick); opacity: 1; }
 .step-text::first-letter { text-transform: uppercase; }
 .step-nums { flex: none; color: var(--slate); font-size: var(--fs-xs); }
 .step-why { color: var(--slate); font-size: var(--fs-s); margin-top: 1px; overflow-wrap: anywhere; }
+.step-why img.look { display: block; width: 100%; max-width: 320px; margin-top: 6px; border-radius: 6px; border: 1px solid var(--line, #ddd); }
 .badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; vertical-align: 1px; }
 .badge.lesson { background: var(--iris-tint); color: var(--iris); }
 .badge.lesson::first-letter, .badge.train::first-letter { text-transform: uppercase; }

@@ -357,6 +357,40 @@ test('a site that is already open in another tab: Mo switches to it instead of n
   await panel.close(); await inbox.close(); await desk.close();
 });
 
+test('stuck on a page with nothing to read: Mo looks at the screen, with element ids drawn on it', { timeout: 60_000, skip: live }, async () => {
+  const site = await context.newPage();
+  await site.goto(`${base}/demo/helpdesk/`);
+  const tabId = await tabIdFor(`${base}/demo/helpdesk/`);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html?tabId=${tabId}`);
+  await panel.waitForSelector('#mode.mock', { timeout: 10_000 });
+  await site.bringToFront(); // only the tab in front can be captured
+
+  // The capture: at most 1280 px wide, with the listed elements' positions to draw on it.
+  const shot = await panel.evaluate(async id => {
+    const m = await import('./agent-core.js');
+    const page = await m.snapshot(id);
+    const where = await m.send(id, { type: 'showme:marks', ids: page.elements.map(e => e.id) });
+    const s = await m.screenshot(id, page);
+    return { width: s.width, mime: s.mime, bytes: s.data.length, marks: where.marks.length };
+  }, tabId);
+  console.log('look:', shot);
+  assert.equal(shot.mime, 'image/jpeg');
+  assert.ok(shot.width > 0 && shot.width <= 1280);
+  assert.ok(shot.marks > 0, 'element ids to draw');
+
+  // A page drawn on a canvas, with nothing to read: the run takes one look, and shows it.
+  await site.evaluate(() => { document.body.innerHTML = '<canvas width="600" height="300"></canvas>'; document.title = 'Board'; });
+  await panel.fill('#goal', 'Create the account');
+  await panel.click('#run');
+  await panel.waitForSelector('#verdict:not([hidden])', { timeout: 30_000 });
+  const steps = await panel.$$eval('#timeline li', lis => lis.map(li => li.textContent.replace(/\s+/g, ' ').trim()));
+  console.log('look steps:', steps);
+  assert.ok(steps.some(t => /Looked at the screen/.test(t)));
+  assert.equal(await panel.$$eval('#timeline img.look', imgs => imgs.length), 1);
+  await panel.close(); await site.close();
+});
+
 // Sheet to form: read the sheet, do row 1 on the form with two notes, check the rules, and
 // Mo adds the other nine starters. A blank Dept follows Sarah's note; "Eng" becomes Engineering.
 test('sheet to form: do row 1, Mo does the other rows', { timeout: live ? 1_200_000 : 240_000 }, async () => {

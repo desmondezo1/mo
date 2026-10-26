@@ -340,9 +340,13 @@ async function run(goal, { skill = null } = {}) {
     state.run = { calls: 0, providerUsd: 0, adapterUsd: 0, ms: 0, adapterMs: null };
     renderSavings();
     r = await runAgent({
-      goal, tabId: tab.id, api, signal: state.abort.signal, isStopped: () => state.stopRequested, skill,
+      goal, tabId: tab.id, api, signal: state.abort.signal, isStopped: () => state.stopRequested, skill, looks: $('looks').checked,
       ui: {
         usage: addUsage,
+        // What Mo saw when it looked at the screen, small, so you can see why it did what it did.
+        looked: (shot, why) => addStep(stepHtml('Looked at the screen', {
+          why: `${why === 'stuck' ? 'Reading the page wasn\'t enough' : 'There was almost nothing to read on this page'}<img class="look" alt="What Mo saw" src="data:${shot.mime};base64,${shot.data}">`,
+        }), { kind: 'note' }),
         step: next => {
           if (next.demoUsed?.skill) state.usedSkill = next.demoUsed.skill;
           const lesson = next.demoUsed ? '<span class="badge lesson">from lesson</span>' : '';
@@ -839,7 +843,7 @@ async function runBatch(onlyRows = null) {
     const values = valuesForRow(sk.rules, row, { answers });
     const goal = rowGoal(sk.name, n, all.length, values);
     await goTo(tab.id, sk.startUrl);
-    const r = await runAgent({ goal, tabId: tab.id, api, signal: state.abort.signal, isStopped: () => state.stopRequested, skill: sk.name, approved, row: n, ui: { usage: addUsage } });
+    const r = await runAgent({ goal, tabId: tab.id, api, signal: state.abort.signal, isStopped: () => state.stopRequested, skill: sk.name, approved, row: n, looks: $('looks').checked, ui: { usage: addUsage } });
     const good = r.outcome === 'done';
     li.className = good ? 'ok' : 'bad';
     li.querySelector('.mark').textContent = good ? '✓' : r.outcome === 'stopped' ? '■' : '✗';
@@ -1038,7 +1042,9 @@ function switchView(view) {
 }
 
 async function init() {
-  const saved = await chrome.storage.local.get(['server', 'goal', 'speak', 'present', 'autorun']);
+  const saved = await chrome.storage.local.get(['server', 'goal', 'speak', 'present', 'autorun', 'looks']);
+  if (saved.looks === false) $('looks').checked = false;
+  $('looks').addEventListener('change', () => chrome.storage.local.set({ looks: $('looks').checked }));
   if (saved.autorun === false) $('autorun').checked = false;
   if (saved.present) { document.body.classList.add('present'); $('present').checked = true; }
   if (saved.server) state.server = saved.server;

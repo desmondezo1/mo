@@ -67,16 +67,17 @@ const routes = {
   },
   'GET /api/usage': async () => usage(),
 
-  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill }) => {
+  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill, screenshot }) => {
     requireFields({ goal, page, sessionId });
     if (!Array.isArray(page.elements)) throw httpError(400, 'page.elements must be an array');
     if (history !== undefined && !Array.isArray(history)) throw httpError(400, 'history must be an array');
     history = history || [];
     const demo = recallDemo({ url: page.url, goal, skill });
-    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo });
+    const image = screenshotOf(screenshot);
+    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo, screenshot: !!image });
     const { json, ms, requestId, usage } = await callTask({
-      task: TASKS.nextAction, userMessage, sessionId, mockContext: { goal, page, history, demo },
-      summarize: j => describeChoice(j, page),
+      task: TASKS.nextAction, userMessage, sessionId, mockContext: { goal, page, history, demo }, image,
+      summarize: j => `${describeChoice(j, page)}${image ? ' (looked at the screen)' : ''}`,
     });
     const action = normaliseAction(json, page);
     return { ...action, ms, requestId, usage, demoUsed: demo ? { id: demo.id, goal: demo.goal, skill: demo.skill || demo.goal } : null };
@@ -401,6 +402,14 @@ export function normaliseAction(json, page) {
     action, element_id: element ? elementId : '', value, submit: json.submit === true,
     reason: String(json.reason || ''), label: element?.label ?? null, role: element?.role ?? null, valid,
   };
+}
+
+// A screenshot from the extension: a JPEG or PNG, at most ~1 MB.
+function screenshotOf(shot) {
+  if (!shot) return null;
+  if (!['image/jpeg', 'image/png'].includes(shot.mime) || typeof shot.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(shot.data.slice(0, 200))) throw httpError(400, 'screenshot must be { mime: image/jpeg or image/png, data: base64 }');
+  if (shot.data.length > 1_400_000) throw httpError(413, 'Screenshot too large');
+  return { mime: shot.mime, data: shot.data };
 }
 
 const sameText = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();

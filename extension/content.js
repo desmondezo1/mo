@@ -169,6 +169,19 @@
     };
   }
 
+  // Where each listed element is on screen, so its id can be drawn on a screenshot.
+  function marks(ids) {
+    const want = new Set(ids);
+    const out = [];
+    for (const el of document.querySelectorAll('[data-showme-id]')) {
+      if (!want.has(el.dataset.showmeId)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) continue;
+      out.push({ id: el.dataset.showmeId, x: r.left, y: r.top, w: r.width, h: r.height });
+    }
+    return { width: innerWidth, height: innerHeight, marks: out };
+  }
+
   function highlight(el) {
     const prev = el.style.outline;
     el.style.outline = '3px solid #ff5a1f';
@@ -473,6 +486,7 @@
     try {
       if (msg.type === 'showme:ping') reply({ ok: true });
       else if (msg.type === 'showme:snapshot') reply({ ok: true, page: snapshot() });
+      else if (msg.type === 'showme:marks') reply({ ok: true, ...marks(msg.ids || []) });
       else if (msg.type === 'showme:act') reply(act(msg.action));
       else if (msg.type === 'showme:record') { setRecording(!!msg.on); reply({ ok: true }); }
       else if (msg.type === 'showme:table') { readTable().then(t => reply({ ok: true, ...t }), err => reply({ ok: false, error: err.message })); return true; }

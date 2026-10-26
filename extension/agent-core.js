@@ -170,6 +170,57 @@ export async function goTo(tabId, url, matches = t => sameSite(t.url, url)) {
   return { ok: true, tabId, how: 'here' };
 }
 
+// ---- A look at the screen when Mo is stuck ------------------------------------------
+// Mo reads pages as text. When that isn't enough (it picked an element that isn't there,
+// keeps repeating itself, is about to ask for help, or the page has almost nothing to read),
+// it takes one look: the visible part of the tab, at most 1280 px wide (about 1,200 image
+// tokens, a hundredth of a cent on Haiku), with each listed element's id drawn on it, so the
+// model still answers "click e14". At most MAX_LOOKS a run.
+export const MAX_LOOKS = 3;
+const LOOK_WIDTH = 1280;
+// Chats are private: Mo reads their text when asked about them, but doesn't photograph them.
+const NO_LOOKS = /(^|\.)(web\.whatsapp\.com|web\.telegram\.org|messenger\.com|discord\.com|slack\.com)$/;
+
+export async function canLook(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  return !!tab?.active && isWebPage(tab.url) && !NO_LOOKS.test(hostOf(tab.url));
+}
+
+function base64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+
+export async function screenshot(tabId, page) {
+  if (!(await canLook(tabId))) return null;
+  const tab = await chrome.tabs.get(tabId);
+  const [shot, where] = await Promise.all([
+    chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 }),
+    send(tabId, { type: 'showme:marks', ids: (page.elements || []).map(e => e.id) }).catch(() => null),
+  ]);
+  const img = await createImageBitmap(await (await fetch(shot)).blob());
+  const scale = Math.min(1, LOOK_WIDTH / img.width);
+  const canvas = new OffscreenCanvas(Math.round(img.width * scale), Math.round(img.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const k = where?.width ? canvas.width / where.width : 1; // page pixels → image pixels
+  ctx.font = 'bold 12px sans-serif';
+  ctx.lineWidth = 2;
+  for (const m of where?.marks || []) {
+    const x = m.x * k, y = m.y * k, top = Math.max(0, y - 15);
+    ctx.strokeStyle = '#e0006b';
+    ctx.strokeRect(x, y, m.w * k, m.h * k);
+    ctx.fillStyle = '#e0006b';
+    ctx.fillRect(x, top, ctx.measureText(m.id).width + 6, 15);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(m.id, x + 3, top + 12);
+  }
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
+  return { data: base64(await blob.arrayBuffer()), mime: 'image/jpeg', width: canvas.width, height: canvas.height };
+}
+
 // Actions the browser does itself; the rest happen inside the page.
 export async function perform(tabId, action) {
   if (action.action === 'open_url') {
@@ -231,11 +282,16 @@ async function answerHere({ goal, tabId, api, signal, r, call }) {
 //   step(next) → handle, failedStep(handle), navigated(handle, url), check(check), error(message), usage(usage, ms)
 // skill: run that taught skill (its newest lesson guides every step). approved: labels of
 // risky buttons the user already approved for this run (one approval for a whole batch).
-export async function runAgent({ goal, tabId, api, signal, isStopped = () => false, ui = {}, skill = null, approved = null, row = null }) {
+// looks: take a screenshot when stuck (off: text only).
+export async function runAgent({ goal, tabId, api, signal, isStopped = () => false, ui = {}, skill = null, approved = null, row = null, looks = true }) {
   const r = {
     goal, tabId, sessionId: `run-${Date.now()}`, history: [], runSteps: [],
-    failure: null, infra: false, finished: false, asked: false, usedLesson: false, decisions: 0, invalid: 0,
+    failure: null, infra: false, finished: false, asked: false, usedLesson: false, decisions: 0, invalid: 0, looks: 0,
   };
+  // Stuck: decide the same step again, this time with a look at the screen. Once per moment
+  // (a decision that already had a look is final) and only where a look is allowed.
+  let lookNext = false;
+  const mayLookAgain = async looked => looks && !looked && r.looks < MAX_LOOKS && await canLook(tabId);
   const call = (fn, ...args) => (ui[fn] ? ui[fn](...args) : undefined);
   const question = isQuestion(goal);
   // Going somewhere can move the run to another tab; from then on it works there.
@@ -271,8 +327,16 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       }
       const page = await snapshot(tabId);
       mo(tabId, 'thinking');
+      // A page with almost nothing to read (a canvas app, a page still drawing) gets a look too.
+      const sparse = isWebPage(page.url) && (page.elements?.length || 0) < 3 && (page.text || '').length < 200;
+      const looked = looks && r.looks < MAX_LOOKS && (lookNext || sparse);
+      const why = lookNext;
+      lookNext = false;
+      const shot = looked ? await screenshot(tabId, page).catch(() => null) : null;
+      if (shot) { r.looks++; call('looked', shot, why ? 'stuck' : 'sparse'); }
       const tabs = (await otherTabs(tabId)).slice(0, 15).map(t => ({ title: t.title, url: new URL(t.url).origin }));
-      const next = privacyFloor(await api('/api/next-action', { method: 'POST', body: { goal, page, tabs, history: r.history, sessionId: r.sessionId, skill }, signal }), page);
+      const body = { goal, page, tabs, history: r.history, sessionId: r.sessionId, skill, ...(shot ? { screenshot: { data: shot.data, mime: shot.mime } } : {}) };
+      const next = privacyFloor(await api('/api/next-action', { method: 'POST', body, signal }), page);
       call('usage', next.usage, next.ms);
       r.decisions++;
       if (!next.valid) r.invalid++;
@@ -280,11 +344,13 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       const handle = call('step', next);
 
       if (next.action === 'done') { r.finished = true; break; }
+      if ((!next.valid || next.action === 'ask_human') && await mayLookAgain(looked)) { call('failedStep', handle); lookNext = true; continue; }
       if (!next.valid) { r.failure = next.action === 'open_url' ? 'I tried to open an address that is not a web URL.' : 'I picked an element that is not on the page.'; break; }
       if (next.action === 'ask_human') { r.failure = `I need help: ${next.value || next.reason}`; r.asked = true; break; }
 
       const same = h => h.action === next.action && h.label === next.label && h.value === next.value;
       const limit = next.action === 'scroll' || next.action === 'wait' ? 4 : 2;
+      if (r.history.filter(same).length >= limit && await mayLookAgain(looked)) { call('failedStep', handle); lookNext = true; continue; }
       if (r.history.filter(same).length >= limit) { r.failure = `I kept repeating “${describeAction(next)}”.`; break; }
 
       if ((next.role === 'button' || next.role === 'link') && RISKY.test(next.label || '') && !approved?.has(next.label)) {
