@@ -230,10 +230,48 @@ function renderSavings() {
     <span class="label">On an adapter${totals?.adapterMeasured ? '' : ' (estimate)'}</span><span class="adapter">${fmtUsd(r.adapterUsd)}</span><span class="adapter">~${r.adapterMs} ms</span>`;
 }
 
-function speak(text) {
-  if (!$('speak').checked || !window.speechSynthesis) return;
+// ---- Mo talks back ---------------------------------------------------------------
+// Every reply is written once by the server with Fish Audio cues ("[pleased] All done!"):
+// Mo speaks the cued version and shows the clean one ("All done!"). See
+// .claude/skills/mo-voice/SKILL.md. With Talk back off, Mo only shows the text.
+let speechAudio = null;
+
+// The best voice this computer has, for when Fish Audio isn't available.
+function systemSpeak(text) {
+  if (!text || !window.speechSynthesis) return;
+  const voices = speechSynthesis.getVoices().filter(v => /^en(-|_|$)/i.test(v.lang));
+  const best = voices.find(v => /premium|enhanced|natural|neural/i.test(v.name))
+    || voices.find(v => /google (uk|us) english/i.test(v.name)) || voices.find(v => /samantha|ava|daniel|serena/i.test(v.name)) || voices[0];
+  const u = new SpeechSynthesisUtterance(text);
+  if (best) u.voice = best;
+  u.rate = 1.03;
   speechSynthesis.cancel();
-  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  speechSynthesis.speak(u);
+}
+
+function stopSpeaking() {
+  speechAudio?.pause();
+  speechAudio = null;
+  window.speechSynthesis?.cancel();
+}
+
+// respond('done'): show Mo's line in its bubble (moState, e.g. 'success') and, with Talk back
+// on, say it. fallbackText is shown if the server can't be reached.
+async function respond(event, data = {}, moState = null, { fallbackText = '', tabId = null, ...moExtra } = {}) {
+  const talk = $('speak').checked;
+  let line = null;
+  try { line = await api('/api/speak', { method: 'POST', body: { event, data, voice: talk } }); } catch { /* fall back below */ }
+  const show = line?.show || fallbackText;
+  if (moState) mo(moState, { ...moExtra, text: show }, tabId);
+  if (!talk || !show) return line;
+  stopSpeaking();
+  if (line?.audio) {
+    speechAudio = new Audio(`data:${line.mime || 'audio/mpeg'};base64,${line.audio}`);
+    speechAudio.play().catch(() => systemSpeak(show));
+  } else {
+    systemSpeak(show);
+  }
+  return line;
 }
 
 function addStep(html, { error = false, kind = '' } = {}) {
@@ -276,6 +314,7 @@ function resetRunUi() {
 
 async function run(goal, { skill = null } = {}) {
   if (state.running || !goal.trim()) return;
+  stopSpeaking();
   state.skill = skill;
   state.usedSkill = skill;
   state.sheetTeach = false;
@@ -342,18 +381,16 @@ async function run(goal, { skill = null } = {}) {
     setVerdict(false, failure === 'Stopped.' ? 'Stopped' : infra ? 'Error — not the agent\'s fault, so nothing to teach' : asked ? 'Asked for help' : 'Failed');
     if (failure !== 'Stopped.' && !infra) {
       offerTeaching(failure);
-      mo('stuck', { text: asked ? `I need help: ${failure.replace(/^I need help: /, '')}` : 'I couldn\'t finish this. Can you show me?' });
-      speak(asked ? `I need help. ${failure.replace(/^I need help: /, '')}. Can you show me?` : 'I couldn\'t finish this. Can you show me how?');
+      const question = failure.replace(/^I need help: /, '');
+      respond(asked ? 'asked' : 'failed', { question }, 'stuck', { fallbackText: asked ? `I need help: ${question}` : 'I couldn\'t finish this. Can you show me how?' });
     }
   } else if (r.answer) {
     setVerdict(true, 'Found it ✓');
-    mo('success', { text: r.answer, hold: 10000 });
-    speak(r.answer);
+    respond('answer', { answer: r.answer }, 'success', { hold: 10000, fallbackText: r.answer });
   } else {
     setVerdict(true, 'Done ✓');
     $('not-right').hidden = false;
-    mo('success', { text: usedLesson ? 'Done, using what you taught me!' : 'Done!' });
-    speak('Done.');
+    respond(usedLesson ? 'doneWithLesson' : 'done', {}, 'success', { fallbackText: 'Done!' });
   }
 }
 
@@ -398,7 +435,7 @@ async function startTeaching() {
   $('teach-ask').hidden = true;
   $('teach-recording').hidden = false;
   if (isWebPage(page.url)) await send(tab.id, { type: 'showme:record', on: true });
-  mo('idle', { text: 'I\'m watching. Show me how.', hold: 5000 }, tab.id);
+  respond('watching', {}, 'idle', { hold: 5000, tabId: tab.id, fallbackText: 'I\'m watching. Show me how.' });
 }
 
 // Steps that can move the page on; a URL change right after one of these was caused by it.
@@ -521,6 +558,7 @@ async function saveLesson(steps) {
     }
     note('taught');
     mo('learning', { count: training.sent, text: training.viaMubit ? `+${training.sent} training examples → Mubit` : `Saved ${steps.length} steps (mock: not sent)` }, state.recordTabId);
+    respond('learned', { skill }); // said, not shown: the bubble keeps the training count
     const where = training.viaMubit ? 'through Mubit' : 'to the mock model (no Mubit key, so nothing was recorded)';
     $('saved-summary').innerHTML =
       (mistake ? `<span class="mistake-inline">${esc(mistake)}</span>` : '') +
@@ -817,7 +855,7 @@ async function runBatch(onlyRows = null) {
   state.abort = null;
   $('run').disabled = false;
   note(failed ? 'fail' : 'done');
-  mo(failed ? 'stuck' : 'success', { text: failed ? `${ok} rows done. ${failed} need a look.` : `All ${ok} rows done!` });
+  respond('batch', { ok, failed }, failed ? 'stuck' : 'success', { fallbackText: failed ? `${ok} rows done. ${failed} need a look.` : `All ${ok} rows done!` });
   refreshMemory();
   refreshTotals();
 }
