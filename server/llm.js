@@ -31,7 +31,8 @@ export class LlmError extends Error {
 
 // task: one of TASKS. kind: 'live' (agent run) or 'training' (re-sent demonstration).
 // summarize(json) gives the one-line description shown in the live call list.
-export async function callTask({ task, userMessage, sessionId, kind = 'live', mockContext, summarize }) {
+// image: an optional screenshot { data: base64, mime } sent with the message.
+export async function callTask({ task, userMessage, sessionId, kind = 'live', mockContext, summarize, image = null }) {
   const config = getConfig();
   checkBudget(); // the user's monthly cap and the service's daily spend cap
   const system = SYSTEM_PROMPTS[task];
@@ -42,9 +43,9 @@ export async function callTask({ task, userMessage, sessionId, kind = 'live', mo
     if (config.provider === 'mock') {
       result = { text: JSON.stringify(mockAnswer(task, mockContext)), inTokens: 0, outTokens: 0, requestId: null };
     } else if (config.provider === 'anthropic') {
-      result = await callAnthropic(config, system, userMessage, sessionId);
+      result = await callAnthropic(config, system, userMessage, sessionId, image);
     } else if (config.provider === 'openai') {
-      result = await callOpenAI(config, system, userMessage, sessionId);
+      result = await callOpenAI(config, system, userMessage, sessionId, image);
     } else {
       throw new Error(`Unknown MUBIT_PROVIDER "${config.provider}" (use anthropic or openai)`);
     }
@@ -55,7 +56,7 @@ export async function callTask({ task, userMessage, sessionId, kind = 'live', mo
   const ms = Date.now() - started;
   const json = parseJson(result.text);
   const logged = logCall({
-    task, kind, ms, ok: !!json, model: config.model, provider: config.provider, sessionId,
+    task, kind, ms, ok: !!json, model: config.model, provider: config.provider, sessionId, ...(image ? { image: true } : {}),
     inTokens: result.inTokens, outTokens: result.outTokens, requestId: result.requestId,
     summary: json ? safeSummary(summarize, json) : 'reply was not JSON',
     ...(json ? {} : { reply: result.text.slice(0, 1500) }), // kept locally to debug bad replies
@@ -101,35 +102,39 @@ async function post(url, headers, body) {
 // Claude 4.5-era models take temperature 0 and answer directly. Newer ones (Haiku 5.5,
 // Sonnet 5.5, Opus 5.5…) reject a non-default temperature and think by default: keep the
 // thinking short with low effort, and leave room for it before the JSON answer.
-export function anthropicBody(model, system, userMessage, sessionId) {
+export function anthropicBody(model, system, userMessage, sessionId, image = null) {
   const legacy = /^claude-(3|haiku-4-5|sonnet-4-5|opus-4-[015])/.test(model);
   return {
     model,
     max_tokens: legacy ? 600 : 4000,
     ...(legacy ? { temperature: 0 } : { output_config: { effort: 'low' } }),
     system,
-    messages: [{ role: 'user', content: userMessage }],
+    messages: [{ role: 'user', content: image
+      ? [{ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } }, { type: 'text', text: userMessage }]
+      : userMessage }],
     // Anthropic takes only metadata.user_id; Mubit uses it as the session.
     metadata: { user_id: sessionId },
   };
 }
 
-async function callAnthropic(config, system, userMessage, sessionId) {
+async function callAnthropic(config, system, userMessage, sessionId, image) {
   const { data, requestId } = await post(`${config.baseUrl}/anthropic/v1/messages`, {
     'x-api-key': config.key,
     'anthropic-version': '2023-06-01',
-  }, anthropicBody(config.model, system, userMessage, sessionId));
+  }, anthropicBody(config.model, system, userMessage, sessionId, image));
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
   return { text, inTokens: data.usage?.input_tokens || 0, outTokens: data.usage?.output_tokens || 0, requestId };
 }
 
-async function callOpenAI(config, system, userMessage, sessionId) {
+async function callOpenAI(config, system, userMessage, sessionId, image) {
   const { data, requestId } = await post(`${config.baseUrl}/openai/v1/chat/completions`, {
     authorization: `Bearer ${config.key}`,
   }, {
     model: config.model,
     max_completion_tokens: 600,
-    messages: [{ role: 'system', content: system }, { role: 'user', content: userMessage }],
+    messages: [{ role: 'system', content: system }, { role: 'user', content: image
+      ? [{ type: 'image_url', image_url: { url: `data:${image.mime};base64,${image.data}` } }, { type: 'text', text: userMessage }]
+      : userMessage }],
     metadata: { session_id: sessionId },
   });
   const text = data.choices?.[0]?.message?.content || '';

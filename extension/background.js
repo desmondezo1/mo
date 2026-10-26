@@ -92,7 +92,7 @@ async function runHeadless(tabId, goal) {
   if (!tab) return;
   headless = { tabId, goal, startUrl: tab.url };
   try {
-    const r = await runAgent({ goal, tabId, api });
+    const r = await runAgent({ goal, tabId, api, looks: (await chrome.storage.local.get('looks')).looks !== false });
     if (r.outcome === 'done') {
       mo(tabId, 'success', r.answer ? { text: r.answer, hold: 10000 } : { text: r.usedLesson ? 'Done, using what you taught me!' : 'Done!' });
     } else if (r.outcome === 'failed' || r.outcome === 'asked') {

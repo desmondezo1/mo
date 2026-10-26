@@ -143,8 +143,9 @@ export function formatDemonstration(demo, history = []) {
   return lines.join('\n');
 }
 
-export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo }) {
+export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo, screenshot = false }) {
   const parts = [`Goal: ${goal}`, '', formatPage(page), ''];
+  if (screenshot) parts.push('A screenshot of the visible part of the page is attached. Each listed element on screen has a pink box with its id: use it to see what the text list misses (layout, icons, what is covered or greyed out), and still answer with an element id from the list.', '');
   // Other tabs, so a goal about a site that's already open goes to it (open_url switches to
   // an open tab) instead of saying "this page isn't that site".
   if (tabs.length) {

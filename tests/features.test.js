@@ -68,6 +68,18 @@ test('a goal that names a site finds its tab, or where to open it', () => {
   assert.doesNotMatch(buildNextActionMessage({ goal: 'G', page: { url: 'https://a.example/', elements: [] } }), /Other open tabs/);
 });
 
+test('a look at the screen goes to the model as an image, before the text', async () => {
+  const { anthropicBody } = await import('../server/llm.js');
+  const plain = anthropicBody('claude-haiku-5-5', 'S', 'U', 's1');
+  assert.equal(plain.messages[0].content, 'U');
+  const shot = anthropicBody('claude-haiku-5-5', 'S', 'U', 's1', { mime: 'image/jpeg', data: 'AAAA' });
+  assert.deepEqual(shot.messages[0].content.map(b => b.type), ['image', 'text']);
+  assert.equal(shot.messages[0].content[0].source.media_type, 'image/jpeg');
+  const page = { url: 'https://a.example/', elements: [] };
+  assert.match(buildNextActionMessage({ goal: 'G', page, screenshot: true }), /screenshot of the visible part of the page is attached/);
+  assert.doesNotMatch(buildNextActionMessage({ goal: 'G', page }), /screenshot/);
+});
+
 let server, base;
 before(async () => { server = createServer(); await new Promise(r => server.listen(0, r)); base = `http://localhost:${server.address().port}`; });
 after(() => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -129,4 +141,12 @@ test('almost-JSON replies still give the fields to act on', async () => {
   const { parseJson } = await import('../server/llm.js');
   const r = parseJson('{"action":"type","element_id":"e3","value":"Burna Boy","submit":true,"reason":"type "Burna Boy" then Enter"}');
   assert.deepEqual([r.action, r.element_id, r.value, r.submit], ['type', 'e3', 'Burna Boy', true]);
+});
+
+test('next-action takes a screenshot and refuses one that is not an image', async () => {
+  const page = { url: `${base}/demo/helpdesk/`, title: 'Helpdesk', elements: [{ id: 'e1', role: 'button', label: 'Create account' }], text: '' };
+  const post = body => fetch(`${base}/api/next-action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ goal: 'Create the account', page, sessionId: 'look-test', ...body }) });
+  assert.equal((await post({ screenshot: { mime: 'image/jpeg', data: Buffer.from('jpeg').toString('base64') } })).status, 200);
+  assert.equal((await post({ screenshot: { mime: 'text/html', data: 'PGh0bWw+' } })).status, 400);
+  assert.equal((await post({ screenshot: { mime: 'image/png', data: 'A'.repeat(1_500_000) } })).status, 413);
 });
