@@ -250,6 +250,16 @@ export function privacyFloor(next, page) {
   return { ...next, element_id: reject.id, label: reject.label, role: reject.role, reason: 'Chose the privacy-friendly option on the cookie banner' };
 }
 
+// "Let me show you", "watch me", "that's not the right way": the person wants to teach, so
+// Mo starts watching instead of running anything.
+export function isTeachRequest(text) {
+  const t = String(text).toLowerCase().replace(/[\u2018\u2019]/g, "'");
+  return /\b(let me|i'?ll|i will|i can|i want to|allow me to) (show|teach) you\b/.test(t)
+    || /\b(watch|observe) (me|how i|what i)\b/.test(t)
+    || /\b(that'?s|this is|it'?s|you'?re doing it) (not|the wrong way)\b.*\b(way|right|how)\b/.test(t)
+    || /\bnot the right way\b|\bwrong way\b/.test(t);
+}
+
 // Questions and "show me where…" requests get an answer highlighted on the page instead
 // of (or after) clicking around.
 // Spoken goals start with filler ("so what's my…", "hey Mo, do I have…") and have no "?".
@@ -265,19 +275,24 @@ export function isQuestion(goal) {
     || /\b(check|see|find out|know|tell me) (if|whether)\b/.test(g);
 }
 
-// Look for the answer on the page; if it's there, scroll to it and box it.
-async function answerHere({ goal, tabId, api, signal, r, call }) {
-  const page = await snapshot(tabId);
-  if (!page.blocks?.length && !page.elements?.length) return false;
-  mo(tabId, 'thinking');
-  const found = await api('/api/locate', { method: 'POST', body: { goal, page, sessionId: r.sessionId }, signal });
-  call('usage', found.usage, found.ms);
-  if (found.demoUsed) r.usedLesson = true;
-  if (!found.found) return false;
-  await send(tabId, { type: 'showme:act', action: { action: 'highlight', element_id: found.block_id, value: found.answer } });
-  r.answer = found.answer;
-  call('answer', found);
-  return true;
+// The proof a done carries, checked against the page in code: the quoted words (any of the
+// page's text, a block, or an element's label, such as a headline) must be there, allowing
+// for "…" between quoted pieces and small differences in punctuation. Returns { ok, quote,
+// id: the block or element to box } or { ok: false, why }.
+const norm = s => String(s || '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\s+/g, ' ').trim();
+export function checkProof(next, page, question) {
+  if (question && !String(next.value || '').trim()) return { ok: false, why: next.reason || 'there was no answer' };
+  const quote = norm(next.evidence).replace(/^["'\s]+|["'.\u2026\s]+$/g, '');
+  if (quote.length < 3) return { ok: false, why: next.reason || 'no words from the page were quoted to show it' };
+  const items = [...(page.blocks || []).map(b => ({ id: b.id, text: norm(b.text) })), ...(page.elements || []).map(e => ({ id: e.id, text: norm(`${e.label || ''} ${e.value || ''}`) }))];
+  const hay = [norm(page.title), norm(page.screenText), norm(page.text), ...items.map(i => i.text)].join('\n');
+  const parts = quote.split(/\s*(?:\u2026|\.\.\.|\|)\s*/).filter(p => p.length >= 3);
+  const words = quote.split(/[^\p{L}\p{N}']+/u).filter(w => w.length > 2);
+  const have = new Set(hay.split(/[^\p{L}\p{N}']+/u));
+  const found = parts.every(p => hay.includes(p)) || (words.length >= 4 && words.filter(w => have.has(w)).length / words.length >= 0.85);
+  if (!found) return { ok: false, why: `“${String(next.evidence).slice(0, 80)}” isn't on the page` };
+  const id = items.find(i => parts.some(p => i.text.includes(p)))?.id || '';
+  return { ok: true, quote: String(next.evidence).slice(0, 120), id };
 }
 
 // Where a run should happen: { where: 'here' | 'tab' | 'open', url, plan, matches(tab) }.
@@ -346,17 +361,7 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       r.history.push(entry);
       r.runSteps.push({ ...entry, handle });
     }
-    // Already on the page that answers it? Then there's nothing to click.
-    if (question && isWebPage((await chrome.tabs.get(tabId)).url) && await answerHere({ goal, tabId, api, signal, r, call })) {
-      r.finished = true;
-    }
-    for (let step = 1; step <= MAX_STEPS && !isStopped() && !r.answer; step++) {
-      // A question: after every move (a new page, a scroll), check whether the answer is now
-      // in view before deciding what to do next. The next-action step only sees controls.
-      if (question && r.history.length && isWebPage((await chrome.tabs.get(tabId)).url) && await answerHere({ goal, tabId, api, signal, r, call })) {
-        r.finished = true;
-        break;
-      }
+    for (let step = 1; step <= MAX_STEPS && !isStopped(); step++) {
       const page = await snapshot(tabId);
       mo(tabId, 'thinking');
       // A page with almost nothing to read (a canvas app, a page still drawing) gets a look too.
@@ -367,7 +372,7 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       const shot = looked ? await screenshot(tabId, page).catch(() => null) : null;
       if (shot) { r.looks++; call('looked', shot, why ? 'stuck' : 'sparse'); }
       const tabs = (await otherTabs(tabId)).slice(0, 15).map(t => ({ title: t.title, url: new URL(t.url).origin }));
-      const body = { goal, page, tabs, plan: r.plan, history: r.history, sessionId: r.sessionId, skill, ...(shot ? { screenshot: { data: shot.data, mime: shot.mime } } : {}) };
+      const body = { goal, page, tabs, plan: r.plan, question, history: r.history, sessionId: r.sessionId, skill, ...(shot ? { screenshot: { data: shot.data, mime: shot.mime } } : {}) };
       const next = privacyFloor(await api('/api/next-action', { method: 'POST', body, signal }), page);
       call('usage', next.usage, next.ms);
       r.decisions++;
@@ -375,7 +380,28 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       if (next.demoUsed) r.usedLesson = true;
       const handle = call('step', next);
 
-      if (next.action === 'done') { r.finished = true; break; }
+      // Done needs proof, checked here against the page: the words it quotes must be on it (and
+      // a question needs its answer). A done without proof isn't the end: the model is told why
+      // and keeps going, with a look at the screen the second time. Three in a row, and it stops.
+      if (next.action === 'done') {
+        const proof = checkProof(next, page, question);
+        if (proof.ok) {
+          r.finished = true;
+          if (question) {
+            r.answer = next.value;
+            if (proof.id) await send(tabId, { type: 'showme:act', action: { action: 'highlight', element_id: proof.id, value: next.value } }).catch(() => {});
+            call('answer', { answer: next.value, demoUsed: next.demoUsed });
+          } else call('check', { done: true, reason: `The page shows “${proof.quote}”` });
+          break;
+        }
+        r.rejected = (r.rejected || 0) + 1;
+        call('failedStep', handle);
+        call('check', { done: false, reason: `Not done yet: ${proof.why}` });
+        if (r.rejected >= 3) { r.failure = `I think it's done, but I can't show it on the page: ${proof.why}.`; break; }
+        r.history.push({ action: 'done', rejected: true, why: proof.why, value: next.value });
+        if (r.rejected >= 2 && await mayLookAgain(looked)) lookNext = true;
+        continue;
+      }
       if ((!next.valid || next.action === 'ask_human') && await mayLookAgain(looked)) { call('failedStep', handle); lookNext = true; continue; }
       if (!next.valid) { r.failure = next.action === 'open_url' ? 'I tried to open an address that is not a web URL.' : 'I picked an element that is not on the page.'; break; }
       if (next.action === 'ask_human') { r.failure = `I need help: ${next.value || next.reason}`; r.asked = true; break; }
@@ -410,16 +436,6 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
     if (isStopped()) r.failure = 'Stopped.';
     else if (!r.failure && !r.finished) r.failure = `I ran out of steps (${MAX_STEPS}).`;
 
-    // A question is done when the answer is on screen, not when a page "looks done".
-    if (!r.failure && question && !r.answer) {
-      if (!(await answerHere({ goal, tabId, api, signal, r, call }))) r.failure = 'I couldn\'t find the answer on this page. Can you show me where it is?';
-    } else if (!r.failure && !question) {
-      await sleep(400);
-      const check = await api('/api/done-check', { method: 'POST', body: { goal, page: await snapshot(tabId), sessionId: r.sessionId }, signal });
-      call('usage', check.usage, check.ms);
-      call('check', check);
-      if (!check.done) r.failure = check.reason || 'The page does not show the goal as done.';
-    }
   } catch (err) {
     if (err.name === 'AbortError' || isStopped()) {
       r.failure = 'Stopped.';

@@ -107,7 +107,8 @@ export function anthropicBody(model, system, userMessage, sessionId, image = nul
   return {
     model,
     max_tokens: legacy ? 600 : 4000,
-    ...(legacy ? { temperature: 0 } : { output_config: { effort: 'low' } }),
+    // MUBIT_EFFORT: how hard newer models think (low, medium, high…), for trying models out.
+    ...(legacy ? { temperature: 0 } : { output_config: { effort: process.env.MUBIT_EFFORT || 'low' } }),
     system,
     messages: [{ role: 'user', content: image
       ? [{ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } }, { type: 'text', text: userMessage }]

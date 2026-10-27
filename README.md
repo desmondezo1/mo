@@ -167,13 +167,15 @@ The full walkthrough, settings and live checks are in [TESTING.md](TESTING.md). 
 
 | Mubit task (Mubit's name) | The question | Answer |
 | --- | --- | --- |
-| `next-action` (Control web browser) | What's the next step? | `{"action", "element_id", "value", "submit"}` |
-| `done-check` (Check whether browser task) | Did it work? | `{"done", "problem"}` |
+| `plan` | Where does this request belong: this page, another open tab, or a site to open? | `{"where", "url", "plan"}` |
+| `next-action` (Control web browser) | What's the next step? A `done` carries its proof: the answer to a question and words quoted from the page | `{"action", "element_id", "value", "submit", "evidence"}` |
+| `done-check` (Check whether browser task) | Did it work? (no longer called by runs: Mo checks a done's proof itself) | `{"done", "problem"}` |
 | `link-check` (Check links) | Is this link phishing? | `{"verdict", "pretends_to_be"}` |
 | `locate` (Find information) | Where's the answer on this page? | the block that holds it |
 | `refine-lesson` (Clean up human's demonstration) | Which taught steps were detours? | steps to drop |
 | `safety-gate` (Protect user) | Is this risky click OK? | allow or block |
 
+- **Mo checks its own work, in code.** A run ends only when the model's `done` quotes words that are really on the page (and, for a question, gives the answer). A done without proof isn't the end: Mo is told why and keeps going, with a look at the screen the second time, and stops after three.
 - **Lessons and corrections become training data.** Mubit trains on Claude's answers, so a lesson is re-sent with your demonstration attached. Claude's answer then becomes a new example of the same task.
 - **Mo keeps your data small.** Link checks send only link addresses, never page content or anything you type. Your Mubit key stays on the backend, and `.env` is never committed.
 
@@ -195,7 +197,6 @@ The full walkthrough, settings and live checks are in [TESTING.md](TESTING.md). 
 | `server/llm.js`, `server/prompts.js` | Every model call goes through Mubit; the fixed instructions per task live here (a test guards them). |
 | `server/memory.js`, `server/refine.js` | Skills and their lessons (with your notes), recalled into later runs; detours removed from demonstrations before they train anything. |
 | `server/ledger.js` | Local log of every call: counts, speed, cost. |
-| `server/verifier.js` | A second, independent check from Banyan Sapling on "did it work?" and before risky clicks. On whenever a Mubit key is set; `SAPLING=off` turns it off; always off in practice mode. |
 | `server/demo-site/` | Sarah's Helpdesk form and the CSV from Sales (`files/`), the New starters sheet and PeopleDesk (an HR form), Sarah's inbox (100 made-up emails and an email preferences page), Calmly and Iron Gym (subscriptions to cancel), Trattoria Nove (restaurant), Tubely (offline video site) and the phishing demo chat. |
 | `scripts/seed-traffic.js`, `scripts/seed-guard.js` | Send practice calls through Mubit so each task has enough examples to train; `seed-guard` also scores Claude on known phishing and real links. |
 | `exam/` | Does the adapter learn? Mubit-routed vs provider-only on Mind2Web and the demo sites. |

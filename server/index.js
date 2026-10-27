@@ -11,7 +11,6 @@ import { findDetours, forTraining } from './refine.js';
 import { callTask, getConfig, LlmError } from './llm.js';
 import { formatStep } from './prompts.js';
 import { addDemo, clearDemos, deleteSkill, listDemos, listSkills, recallDemo, renameSkill, updateDemo } from './memory.js';
-import { verifyDone, verifySafe, verifierEnabled } from './verifier.js';
 import { authRequired, checkRate, corsOrigin, currentUser, runAs, usage, userFor } from './account.js';
 import { lineFor, synthesize, synthesizeLine, voiceConfig } from './speech.js';
 import { signals as linkSignals, localVerdict, domainAgeDays, loadFeed, feedSize, memory as guardMemory, linkMessage, explain, brandFor, evalResults, MODEL_THRESHOLD } from './guard.js';
@@ -79,52 +78,42 @@ const routes = {
     return { ...normalisePlan(json, tabs), ms, requestId, usage };
   },
 
-  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill, screenshot, plan }) => {
+  'POST /api/next-action': async ({ goal, page, tabs, history, sessionId, skill, screenshot, plan, question }) => {
     requireFields({ goal, page, sessionId });
     if (!Array.isArray(page.elements)) throw httpError(400, 'page.elements must be an array');
     if (history !== undefined && !Array.isArray(history)) throw httpError(400, 'history must be an array');
     history = history || [];
     const demo = recallDemo({ url: page.url, goal, skill });
     const image = screenshotOf(screenshot);
-    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo, screenshot: !!image, plan: typeof plan === 'string' ? plan.slice(0, 300) : '' });
+    const userMessage = buildNextActionMessage({ goal, page, tabs: Array.isArray(tabs) ? tabs : [], history, demo, screenshot: !!image, plan: typeof plan === 'string' ? plan.slice(0, 300) : '', question: question === true });
     const { json, ms, requestId, usage } = await callTask({
-      task: TASKS.nextAction, userMessage, sessionId, mockContext: { goal, page, history, demo }, image,
+      task: TASKS.nextAction, userMessage, sessionId, mockContext: { goal, page, history, demo, question: question === true }, image,
       summarize: j => `${describeChoice(j, page)}${image ? ' (looked at the screen)' : ''}`,
     });
     const action = normaliseAction(json, page);
     return { ...action, ms, requestId, usage, demoUsed: demo ? { id: demo.id, goal: demo.goal, skill: demo.skill || demo.goal } : null };
   },
 
-  // Claude's check (through Mubit) and Sapling's independent check run side by side;
-  // a Sapling "fail" overrides a "goal met", which sends the user to "Show me".
+  // A separate "did it work?" check. Runs no longer use it (a done carries its own proof,
+  // checked in the extension); kept for the Mubit task history and API callers.
   'POST /api/done-check': async ({ goal, page, sessionId }) => {
     requireFields({ goal, page, sessionId });
-    const [{ json, ms, requestId, usage }, sapling] = await Promise.all([
-      callTask({
-        task: TASKS.doneCheck, userMessage: buildDoneCheckMessage({ goal, page }), sessionId, mockContext: { goal, page },
-        summarize: j => (j.done ? 'goal met' : `goal not met: ${j.reason || problemText(j.problem)}`),
-      }),
-      verifierEnabled() ? verifyDone({ goal, pageText: page.text }) : null,
-    ]);
-    const vetoed = json.done === true && sapling?.verdict === 'fail';
-    const reason = vetoed ? `The verifier disagrees: the page doesn't show "${goal}" was done`
-      : String(json.reason || (json.done ? 'The page shows the goal is done' : problemText(json.problem)));
-    return { done: json.done === true && !vetoed, reason, ms, requestId, usage, verifier: sapling };
+    const { json, ms, requestId, usage } = await callTask({
+      task: TASKS.doneCheck, userMessage: buildDoneCheckMessage({ goal, page }), sessionId, mockContext: { goal, page },
+      summarize: j => (j.done ? 'goal met' : `goal not met: ${j.reason || problemText(j.problem)}`),
+    });
+    const reason = String(json.reason || (json.done ? 'The page shows the goal is done' : problemText(json.problem)));
+    return { done: json.done === true, reason, ms, requestId, usage };
   },
 
   // Before a submit/pay/delete click. evidence = the visible text of the form or page.
-  'POST /api/safety-gate': async ({ goal, action, element, sessionId, evidence, constraints }) => {
+  'POST /api/safety-gate': async ({ goal, action, element, sessionId }) => {
     requireFields({ goal, action, sessionId });
-    const [{ json, ms, requestId, usage }, sapling] = await Promise.all([
-      callTask({
-        task: TASKS.safetyGate, userMessage: buildSafetyMessage({ goal, action, element }), sessionId, mockContext: { goal, action, element },
-        summarize: j => `${j.allow === false ? 'blocked' : 'allowed'}: ${j.reason || ''}`,
-      }),
-      verifierEnabled() ? verifySafe({ goal, constraints, evidence: evidence || `${element?.label || ''} ${goal}` }) : null,
-    ]);
-    const blocked = !!sapling?.block;
-    const reason = blocked ? `The verifier scored this click unsafe (${Math.round(sapling.safeScore * 100)}% safe)` : String(json.reason || '');
-    return { allow: json.allow !== false && !blocked, reason, ms, requestId, usage, verifier: sapling };
+    const { json, ms, requestId, usage } = await callTask({
+      task: TASKS.safetyGate, userMessage: buildSafetyMessage({ goal, action, element }), sessionId, mockContext: { goal, action, element },
+      summarize: j => `${j.allow === false ? 'blocked' : 'allowed'}: ${j.reason || ''}`,
+    });
+    return { allow: json.allow !== false, reason: String(json.reason || ''), ms, requestId, usage };
   },
 
   // A question about the page: which block answers it, and the answer in one sentence.
@@ -413,6 +402,7 @@ export function normaliseAction(json, page) {
   return {
     action, element_id: element ? elementId : '', value, submit: json.submit === true,
     reason: String(json.reason || ''), label: element?.label ?? null, role: element?.role ?? null, valid,
+    ...(action === 'done' ? { evidence: String(json.evidence || '').slice(0, 500) } : {}),
   };
 }
 

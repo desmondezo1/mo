@@ -4,7 +4,7 @@
 //   If the side panel is open it listens and runs the goal where you can watch;
 //   otherwise a hidden offscreen page listens and the agent runs here, with Mo narrating.
 
-import { runAgent, createApi, getServer, mo } from './agent-core.js';
+import { runAgent, createApi, getServer, mo, isTeachRequest } from './agent-core.js';
 
 const api = createApi(getServer);
 const panels = new Set();     // open side panels (each keeps a port to us)
@@ -105,6 +105,13 @@ async function sayAloud({ audio, mime, text }) {
 
 // A voice goal while the side panel is closed: run it here; Mo shows each step.
 async function runHeadless(tabId, goal) {
+  // "Let me show you how": teaching needs the panel, which only a click can open here.
+  if (isTeachRequest(goal)) {
+    const { lastVoiceGoal } = await chrome.storage.session.get('lastVoiceGoal');
+    await chrome.storage.session.set({ pendingTeach: { goal: lastVoiceGoal || '', tabId, startUrl: null, failure: 'You offered to show me how.', at: Date.now() } });
+    return respond(tabId, 'showMe', {}, 'stuck', { action: 'teach', fallbackText: 'Okay. Click me, and I\'ll watch how you do it.' });
+  }
+  chrome.storage.session.set({ lastVoiceGoal: goal });
   if (headless) return respond(tabId, 'busy', {}, 'idle', { hold: 3000, fallbackText: 'I\'m still working on the last one.' });
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) return;

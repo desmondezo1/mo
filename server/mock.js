@@ -174,6 +174,25 @@ export function videoQuery(goal) {
   return m ? m[1].trim() : null;
 }
 
+// A done with its proof, as the model is asked for: a question's answer and the block it came
+// from; a task's confirmation words. When the mock's own check says it isn't done, the proof
+// is missing (so the extension rejects it), with the reason.
+function withProof(next, { goal, page, question, demo }) {
+  if (next.action !== 'done') return next;
+  if (question) {
+    // A taught answer ("point out …" in the lesson) says where to look.
+    const hint = demo?.steps?.filter(s => s.action === 'highlight').pop()?.value || demo?.answers?.[0]?.value;
+    const found = locate({ goal, page, hint });
+    const block = (page.blocks || []).find(b => b.id === found.block_id);
+    return found.found && block ? { ...next, value: found.answer, evidence: block.text.slice(0, 80) } : { ...next, evidence: '', reason: 'The answer is not on this page' };
+  }
+  const check = doneCheck({ goal, page });
+  if (!check.done) return { ...next, evidence: '', reason: check.reason || 'No confirmation on the page' };
+  const lines = [page.screenText, page.text].filter(Boolean).join('\n').split(/\n|(?<=[.!])\s/).map(s => s.trim()).filter(Boolean);
+  const proof = lines.find(l => /confirmed|booked|added|saved|submitted|created|cancelled|playing|no more|won't get|open/i.test(l)) || lines[0] || page.title || '';
+  return { ...next, evidence: proof.slice(0, 80) };
+}
+
 function doneCheck({ goal, page }) {
   const text = page.text || '';
   if (/\b(file|csv|spreadsheet|attachment)\b/i.test(goal) && !fillIns(goal)) {
@@ -250,7 +269,7 @@ function locate({ goal, page, hint }) {
 }
 
 export function mockAnswer(task, context) {
-  if (task === TASKS.nextAction) return nextAction(context);
+  if (task === TASKS.nextAction) return withProof(nextAction(context), context);
   if (task === TASKS.doneCheck) return doneCheck(context);
   if (task === TASKS.safetyGate) return safetyGate(context);
   if (task === TASKS.locate) return locate(context);

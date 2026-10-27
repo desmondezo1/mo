@@ -114,7 +114,7 @@ test('fail, show me, rerun succeeds', { timeout: live ? 300_000 : 90_000 }, asyn
   await panel.waitForSelector('#ledger table');
   const ledger = await panel.textContent('#ledger');
   assert.match(ledger, /next-action/);
-  assert.match(ledger, /done-check/);
+  assert.match(ledger, /plan/); // the run's first call: where the request belongs
 
   await panel.screenshot({ path: path.join(root, 'test-results', 'sidepanel-ledger.png') });
 });
@@ -434,6 +434,22 @@ test('a chat list drawn from divs (as WhatsApp does) is read, and a spoken quest
   await panel.click('#run');
   await panel.waitForSelector('#verdict:not([hidden])', { timeout: 30_000 });
   assert.match(await panel.textContent('#timeline'), /Found it:.*Running late/);
+  await panel.close(); await site.close();
+});
+
+test('saying "let me show you how" starts watching on the page you are on, instead of running', { timeout: 60_000, skip: live }, async () => {
+  const site = await context.newPage();
+  await site.goto(`${base}/demo/helpdesk/`);
+  const tabId = await tabIdFor(`${base}/demo/helpdesk/`);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${extId}/sidepanel.html?tabId=${tabId}`);
+  await panel.waitForSelector('#mode.mock', { timeout: 10_000 });
+  await panel.fill('#goal', 'no, that\'s not the right way, let me show you how to do this');
+  await panel.click('#run');
+  await panel.waitForSelector('#teach-recording:not([hidden])', { timeout: 10_000 });
+  await site.waitForSelector('#showme-recording-badge', { timeout: 10_000 });
+  assert.equal(site.url(), `${base}/demo/helpdesk/`, 'no reload, no navigation');
+  assert.equal(await panel.$$eval('#timeline li', l => l.length), 0, 'nothing ran');
   await panel.close(); await site.close();
 });
 

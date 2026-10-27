@@ -20,7 +20,7 @@ const { parseJson } = await import('../server/llm.js');
 test('system prompts are unchanged (Mubit task fingerprints)', () => {
   const hashes = Object.fromEntries(Object.entries(SYSTEM_PROMPTS).map(([k, v]) => [k, crypto.createHash('sha256').update(v).digest('hex').slice(0, 16)]));
   assert.deepEqual(hashes, {
-    'next-action': '6fa8022309b83e73',
+    'next-action': '5d2706f5a3d88dc5', // v4: done carries its answer and proof
     'done-check': '447bb397c645565a',
     'safety-gate': 'd66fb5cd082cdb56',
     'locate': '7ddb0f5bb58d1e0a',

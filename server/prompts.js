@@ -50,7 +50,7 @@ export const SYSTEM_PROMPTS = {
   [TASKS.nextAction]: [
     'You control a web browser for a user. You get the user\'s goal, the current page (URL and interactive elements), the steps already taken, and sometimes a demonstration a human recorded.',
     'Choose exactly one next action.',
-    'Reply with JSON only, no prose: {"action":"<action>","element_id":"<id from the list, or empty>","value":"<see below, or empty>","submit":false}',
+    'Reply with JSON only, no prose: {"action":"<action>","element_id":"<id from the list, or empty>","value":"<see below, or empty>","submit":false,"evidence":"<for done only, see below>"}',
     'Actions:',
     '- click: element_id.',
     '- type: element_id, value = the text. Set "submit":true to press Enter afterwards (search boxes).',
@@ -60,9 +60,9 @@ export const SYSTEM_PROMPTS = {
     '- back: go back one page.',
     '- scroll: value = down or up, to reveal more of the page.',
     '- wait: the page is still loading.',
-    '- ask_human: you are stuck or unsure; value = what you need. A human will show you how.',
-    '- done: the goal is complete.',
-    'Rules: use only element ids from the list. Do not repeat a step that already succeeded. If a demonstration covers this page, follow it, adapting values to the current goal. Prefer open_url over clicking through menus when you know the address. Reply "done" only when the page shows the goal is achieved or the last step completed it.',
+    '- ask_human: only when truly blocked (a sign-in, a captcha, payment details, or a choice only the user can make) or nothing else is left to try; value = what you need. A human will show you how.',
+    '- done: the goal is complete. For a question, value = the answer, in one to three plain sentences written from what the page shows (combine several items when asked for "the latest" or a summary). evidence = words copied exactly from the page (its text or an element\'s label, such as a headline or "Account created") that show the answer or that the goal is done.',
+    'Rules: use only element ids from the list. Do not repeat a step that already succeeded. If a demonstration covers this page, follow it, adapting values to the current goal. Prefer open_url over clicking through menus when you know the address. Reply "done" only when the page shows the goal is achieved, and quote what shows it. If a done is rejected, the reason is in the steps: fix it or keep going.',
   ].join('\n'),
 
   // v2: a fixed problem code instead of a free-text reason (see next-action v3).
@@ -127,7 +127,7 @@ export function formatStep(step) {
     case 'highlight': return `point out "${step.value}"`;
     case 'new_tab': return 'open a new tab';
     case 'switch_tab': return `switch to the tab ${step.value}`;
-    case 'done': return 'done';
+    case 'done': return step.rejected ? `said done, but it was rejected: ${step.why}` : 'done';
     default: return step.value === 'tick' || step.value === 'untick' ? `${step.value} ${target}` : `click ${target}`;
   }
 }
@@ -165,9 +165,10 @@ export function buildPlanMessage({ goal, page, tabs = [] }) {
   return parts.join('\n');
 }
 
-export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo, screenshot = false, plan = '' }) {
+export function buildNextActionMessage({ goal, page, tabs = [], history = [], demo, screenshot = false, plan = '', question = false }) {
   const parts = [`Goal: ${goal}`, '', formatPage(page), ''];
-  if (plan) parts.splice(1, 0, `Plan: ${plan}`);
+  if (plan) parts.splice(1, 0, `Plan (a guide: change course if a page is blocked or shows a better way): ${plan}`);
+  if (question) parts.splice(1, 0, 'This is a question: when the page shows the answer, reply done with the answer in value and the words it comes from in evidence.');
   if (screenshot) parts.push('A screenshot of the visible part of the page is attached. Each listed element on screen has a pink box with its id: use it to see what the text list misses (layout, icons, what is covered or greyed out), and still answer with an element id from the list.', '');
   // Other tabs, so a goal about a site that's already open goes to it (open_url switches to
   // an open tab) instead of saying "this page isn't that site".
