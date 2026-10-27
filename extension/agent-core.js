@@ -332,8 +332,11 @@ async function planRun(goal, tabId, api, signal, r, call) {
 export async function runAgent({ goal, tabId, api, signal, isStopped = () => false, ui = {}, skill = null, approved = null, row = null, looks = true }) {
   const r = {
     goal, tabId, sessionId: `run-${Date.now()}`, history: [], runSteps: [],
-    failure: null, infra: false, finished: false, asked: false, usedLesson: false, decisions: 0, invalid: 0, looks: 0,
+    failure: null, infra: false, finished: false, asked: false, usedLesson: false, decisions: 0, invalid: 0, looks: 0, events: [],
   };
+  // What the run did, step by step, for the server's trace (what the model was told and said is
+  // traced there; this adds what happened in the browser and the harness's own checks).
+  const note = (type, data = {}) => r.events.push({ t: Date.now(), type, ...data });
   // Stuck: decide the same step again, this time with a look at the screen. Once per moment
   // (a decision that already had a look is final) and only where a look is allowed.
   let lookNext = false;
@@ -352,8 +355,10 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
     // open? ("Do I have WhatsApp messages?" asked on Gmail means WhatsApp, not a Gmail search.)
     // A taught skill or a sheet row knows where it works, so it skips this.
     const where = skill || row ? null : await planRun(goal, tabId, api, signal, r, call);
+    if (where) note('plan', { where: where.where, url: where.url || null, plan: where.plan || '' });
     if (where && where.where !== 'here') {
       const went = await moveTo(where.url, where.matches);
+      note('went', { how: went.how, tabId: went.tabId, url: (await chrome.tabs.get(tabId).catch(() => null))?.url });
       const entry = went.how === 'switched'
         ? { action: 'switch_tab', value: (await chrome.tabs.get(tabId)).url, label: went.title || '' }
         : { action: 'open_url', value: where.url, label: '' };
@@ -370,7 +375,7 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       const why = lookNext;
       lookNext = false;
       const shot = looked ? await screenshot(tabId, page).catch(() => null) : null;
-      if (shot) { r.looks++; call('looked', shot, why ? 'stuck' : 'sparse'); }
+      if (shot) { r.looks++; call('looked', shot, why ? 'stuck' : 'sparse'); note('looked', { why: why ? 'stuck' : 'sparse', width: shot.width }); }
       const tabs = (await otherTabs(tabId)).slice(0, 15).map(t => ({ title: t.title, url: new URL(t.url).origin }));
       const body = { goal, page, tabs, plan: r.plan, question, history: r.history, sessionId: r.sessionId, skill, ...(shot ? { screenshot: { data: shot.data, mime: shot.mime } } : {}) };
       const next = privacyFloor(await api('/api/next-action', { method: 'POST', body, signal }), page);
@@ -379,12 +384,17 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       if (!next.valid) r.invalid++;
       if (next.demoUsed) r.usedLesson = true;
       const handle = call('step', next);
+      note('decision', {
+        step, url: page.url, title: page.title, elements: page.elements?.length || 0, action: next.action, element_id: next.element_id || null,
+        label: next.label || null, value: next.value || null, valid: next.valid, evidence: next.evidence ?? undefined, lesson: !!next.demoUsed, ms: next.ms,
+      });
 
       // Done needs proof, checked here against the page: the words it quotes must be on it (and
       // a question needs its answer). A done without proof isn't the end: the model is told why
       // and keeps going, with a look at the screen the second time. Three in a row, and it stops.
       if (next.action === 'done') {
         const proof = checkProof(next, page, question);
+        note('proof', { ok: proof.ok, why: proof.why || null, quote: proof.quote || null });
         if (proof.ok) {
           r.finished = true;
           if (question) {
@@ -414,12 +424,14 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
       if ((next.role === 'button' || next.role === 'link') && RISKY.test(next.label || '') && !approved?.has(next.label)) {
         const gate = await api('/api/safety-gate', { method: 'POST', body: { goal, action: next, element: { label: next.label, role: next.role }, evidence: page.text, sessionId: r.sessionId }, signal });
         call('usage', gate.usage, gate.ms);
+        note('safety', { label: next.label, allow: gate.allow, reason: gate.reason });
         if (!gate.allow) { r.failure = `Safety gate blocked “${next.label}”: ${gate.reason}`; break; }
       }
 
       const before = (await chrome.tabs.get(tabId)).url;
       mo(tabId, 'acting', { targetId: next.element_id, text: describeAction(next) });
       const result = next.action === 'open_url' ? await moveTo(next.value) : await perform(tabId, next);
+      note('result', { ok: !!result.ok, error: result.error || null, how: result.how || null });
       if (!result.ok) { r.failure = result.error; call('failedStep', handle); break; }
       // A click on a checkbox says which way it went, as Ada's recorded steps do.
       const box = next.action === 'click' && next.role === 'checkbox' ? page.elements.find(e => e.id === next.element_id) : null;
@@ -452,7 +464,7 @@ export async function runAgent({ goal, tabId, api, signal, isStopped = () => fal
   api('/api/runs', { method: 'POST', body: {
     goal, outcome: r.outcome, usedLesson: r.usedLesson, steps: r.history.length, decisions: r.decisions, invalid: r.invalid,
     tools: [...new Set(r.history.map(h => h.action).concat(r.finished ? ['done'] : [], r.answer ? ['highlight'] : []))], url: r.finalUrl,
-    skill, row,
+    skill, row, sessionId: r.sessionId, failure: r.failure, answer: r.answer || null, events: r.events,
   } }).catch(() => {});
   return r;
 }

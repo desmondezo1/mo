@@ -9,6 +9,7 @@ import { loadEnv } from './env.js';
 import { TASKS, buildPlanMessage, buildNextActionMessage, buildDoneCheckMessage, buildSafetyMessage, buildLocateMessage, buildRefineMessage } from './prompts.js';
 import { findDetours, forTraining } from './refine.js';
 import { callTask, getConfig, LlmError } from './llm.js';
+import { trace } from './trace.js';
 import { formatStep } from './prompts.js';
 import { addDemo, clearDemos, deleteSkill, listDemos, listSkills, recallDemo, renameSkill, updateDemo } from './memory.js';
 import { authRequired, checkRate, corsOrigin, currentUser, runAs, usage, userFor } from './account.js';
@@ -226,9 +227,15 @@ const routes = {
   'GET /api/calls': async () => ({ calls: recentCalls(60) }),
 
   // The panel reports how each run ended, for "failures → improvements".
-  'POST /api/runs': async ({ goal, outcome, usedLesson, steps, tools, url, mistake, decisions, invalid, skill, row }) => {
+  'POST /api/runs': async ({ goal, outcome, usedLesson, steps, tools, url, mistake, decisions, invalid, skill, row, sessionId, failure, answer, events }) => {
     requireFields({ goal, outcome });
     if (!['done', 'failed', 'asked', 'error', 'stopped'].includes(outcome)) throw httpError(400, 'unknown outcome');
+    // The run's own record of what it did, for traces (see server/trace.js).
+    trace('run', {
+      sessionId: sessionId ? String(sessionId).slice(0, 80) : null, goal: String(goal).slice(0, 500), outcome, url: url ? String(url).slice(0, 300) : null,
+      failure: failure ? String(failure).slice(0, 500) : null, answer: answer ? String(answer).slice(0, 1000) : null,
+      events: Array.isArray(events) ? events.slice(0, 200) : [],
+    });
     return addRun({
       goal: String(goal).slice(0, 200), outcome, usedLesson: !!usedLesson, steps: Number(steps) || 0,
       tools: Array.isArray(tools) ? tools.slice(0, 20).map(String) : [], url: url ? String(url).slice(0, 300) : null,
