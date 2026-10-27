@@ -2,7 +2,7 @@
 // demonstration when the run fails, and shows the Mubit ledger.
 
 import { createMubitView, esc, fmtUsd, prettyModel } from './panel-mubit.js';
-import { InfraError, createApi, isOwnPage, isWebPage, sleep, waitForLoad, send, snapshot, describeAction, shortUrl, runAgent, mo as moOn } from './agent-core.js';
+import { InfraError, createApi, isOwnPage, isWebPage, sleep, waitForLoad, send, snapshot, describeAction, shortUrl, runAgent, mo as moOn, isTeachRequest } from './agent-core.js';
 import { createVoiceSession } from './voice-core.js';
 import { createJudgesView } from './panel-judges.js';
 import { authConfig, getSession, signInWithGoogle, sendEmailCode, verifyEmailCode, signOut } from './auth-core.js';
@@ -291,6 +291,7 @@ function resetRunUi() {
 // here it draws each step on the timeline.
 
 async function run(goal, { skill = null } = {}) {
+  if (isTeachRequest(goal)) return teachNow().catch(err => offerTeaching(err.message));
   if (state.running || !goal.trim()) return;
   stopSpeaking();
   state.skill = skill;
@@ -344,7 +345,9 @@ async function run(goal, { skill = null } = {}) {
       },
     });
     state.runSteps = r.runSteps.map(step => ({ ...step, li: step.handle }));
-    if (r.tabId) state.runTabId = r.tabId; // the run may have moved to another tab ("check my WhatsApp")
+    // The run may have moved to another tab ("check my WhatsApp"): teaching happens there,
+    // from where it is now, not from the first tab's address.
+    if (r.tabId && r.tabId !== tab.id) Object.assign(state, { runTabId: r.tabId, lastStartUrl: null });
   }
   state.running = false;
   state.abort = null;
@@ -402,10 +405,25 @@ async function goTo(tabId, url) {
   return waitForLoad(tabId);
 }
 
+// Said, not clicked ("let me show you how", "that's not the right way"): stop what's running
+// and start watching on the page in front of the person, for the last goal if there was one.
+async function teachNow() {
+  if (state.running) {
+    state.stopRequested = true;
+    state.abort?.abort();
+    while (state.running) await sleep(100);
+  }
+  const tab = await targetTab();
+  Object.assign(state, { runTabId: tab.id, lastStartUrl: null });
+  offerTeaching(state.lastGoal ? `Show me how to ${state.lastGoal.replace(/^\w/, c => c.toLowerCase())}.` : 'Show me how, and I\'ll learn it.', 'Okay, show me');
+  await startTeaching();
+}
+
 async function startTeaching() {
   const tab = await tabById(state.runTabId);
-  // Start the demonstration from the page the run started on.
-  const page = await goTo(tab.id, state.lastStartUrl);
+  // Start the demonstration from the page the run started on (or, when asked in words, from
+  // where the person is now).
+  const page = state.lastStartUrl ? await goTo(tab.id, state.lastStartUrl) : await waitForLoad(tab.id);
   state.recording = true;
   state.recorded = [];
   state.recordTabId = tab.id;

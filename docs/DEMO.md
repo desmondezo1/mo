@@ -224,6 +224,5 @@ Answer with one JSON object only.
 | --- | --- |
 | 103 automated tests, plus 1 live-only | `npm run test:all` (unit, API and the extension in a real Chrome); the audit test runs only with `SHOWME_E2E_LIVE=1` |
 | Phishing: 98 of 120 caught, no real site called phishing | `npm run seed:guard`, Claude Haiku 5.5, 24 Oct (TESTING.md) |
-| Second check by Banyan Sapling | On by default with a Mubit key (`SAPLING=off` turns it off) |
 | Adapter cost and speed | **Estimates** in the panel until you enter real numbers from Try models |
 | Done-check adapter v1: 83.3% (10 of 12), needs 85% | Mubit's Adapters page, 24 Oct |

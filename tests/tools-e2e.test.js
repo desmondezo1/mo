@@ -559,7 +559,7 @@ test('teaching follows a new tab, shows each catch, drops the detour, and learns
   const r = await run(panel, goal);
   console.log('first try:', r.verdict, '|', r.timeline);
   assert.equal(r.verdict, 'Failed');
-  assert.match(await panel.textContent('#teach-reason'), /couldn't find the answer/);
+  assert.match(await panel.textContent('#teach-reason'), /can't show it on the page|not on this page/);
 
   await panel.click('#show-me');
   await panel.waitForSelector('#teach-recording:not([hidden])');

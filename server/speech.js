@@ -41,6 +41,7 @@ const LINES = {
   answer: ({ answer }) => [`[warm] Found it. [break] ${full(answer)}`, `[pleased] Here it is. [break] ${full(answer)}`],
   error: ({ message }) => [`[apologetic] Something went wrong. [break] ${full(message || 'Check my panel.')}`],
   busy: () => ['[gentle] I\'m still working on the last one.'],
+  showMe: () => ['[warm] Okay. [break] Click me, and I\'ll watch how you do it.', '[pleased] Sure. [break] Click me and show me how.'],
   watching: () => ['[warm] I\'m watching. [break] Show me how.', '[curious] Okay, I\'m watching. [break] Go ahead.'],
   learned: ({ skill }) => (skill ? [`[pleased] Got it. [break] I've learned how to ${String(skill).replace(/^\w/, c => c.toLowerCase())}.`, `[pleased] Thanks! [break] I'll remember ${full(skill, 60).replace(/\.$/, '')}.`] : ['[pleased] Got it. [break] I\'ll do it your way from now on.']),
   batch: ({ ok = 0, failed = 0 }) => (failed

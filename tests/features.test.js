@@ -10,7 +10,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'showme-features-'));
 Object.assign(process.env, { SHOWME_DATA_DIR: dir, SHOWME_MOCK: '1', MUBIT_API_KEY: '' });
 
 const { findDetours, forTraining } = await import('../server/refine.js');
-const { isQuestion, siteInGoal, sameSite } = await import('../extension/agent-core.js');
+const { isQuestion, siteInGoal, sameSite, checkProof, isTeachRequest } = await import('../extension/agent-core.js');
 const { buildNextActionMessage } = await import('../server/prompts.js');
 const { createServer } = await import('../server/index.js');
 
@@ -96,6 +96,25 @@ test('the plan picks where a request belongs; a bad answer means "here"', async 
   assert.match(msg, /^Request: Do I have any WhatsApp messages\?/);
   assert.match(msg, /- Slack \(https:\/\/app\.slack\.com\)/);
   assert.match(SYSTEM_PROMPTS.plan, /not by words that happen to appear on the page/);
+});
+
+test('done needs proof from the page: quoted words, and an answer for a question', () => {
+  const page = { title: 'anthropic - Google News', text: 'Top stories', screenText: '', blocks: [{ id: 'b1', text: 'Headlines' }],
+    elements: [{ id: 'e7', role: 'link', label: 'Anthropic releases Claude Opus 5.5 with a longer memory' }, { id: 'e8', role: 'link', label: 'Mubit raises a seed round' }] };
+  const ok = checkProof({ value: 'Anthropic released Claude Opus 5.5.', evidence: 'Anthropic releases Claude Opus 5.5 with a longer memory' }, page, true);
+  assert.deepEqual([ok.ok, ok.id], [true, 'e7'], 'a headline (a link) counts as proof, and is what gets boxed');
+  assert.equal(checkProof({ value: 'x', evidence: '“Anthropic releases Claude Opus 5.5…”' }, page, true).ok, true, 'quote marks and an ellipsis are fine');
+  assert.equal(checkProof({ value: 'x', evidence: 'Apple buys Anthropic' }, page, true).ok, false, 'made-up words are not');
+  assert.match(checkProof({ value: '', evidence: 'Top stories' }, page, true).why, /no answer/);
+  assert.match(checkProof({ value: '', evidence: '' }, page, false).why, /no words from the page/);
+  assert.equal(checkProof({ value: '', evidence: 'top  STORIES' }, page, false).ok, true, 'case and spacing are ignored');
+});
+
+test('"let me show you" means teach, not run', () => {
+  for (const t of ['Let me show you how to do this', 'okay I\'ll show you', 'watch me do it', 'that\'s not the right way', 'no, this is not how you do it', 'you\'re doing it the wrong way'])
+    assert.equal(isTeachRequest(t), true, t);
+  for (const t of ['show me how to book a table', 'what\'s the latest news on Anthropic', 'watch the new Burna Boy video', 'Do I have WhatsApp messages?'])
+    assert.equal(isTeachRequest(t), false, t);
 });
 
 let server, base;
