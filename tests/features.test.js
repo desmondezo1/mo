@@ -187,3 +187,18 @@ test('next-action takes a screenshot and refuses one that is not an image', asyn
   assert.equal((await post({ screenshot: { mime: 'text/html', data: 'PGh0bWw+' } })).status, 400);
   assert.equal((await post({ screenshot: { mime: 'image/png', data: 'A'.repeat(1_500_000) } })).status, 413);
 });
+
+test('traces: each model call and the run\'s own record are kept, and read back', async () => {
+  const { readTraces } = await import('../server/trace.js');
+  const page = { url: `${base}/demo/helpdesk/`, title: 'Helpdesk', elements: [{ id: 'e1', role: 'button', label: 'Create account' }], text: '' };
+  const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await post('/api/next-action', { goal: 'Create the account', page, sessionId: 'trace-test' });
+  await post('/api/runs', { goal: 'Create the account', outcome: 'failed', sessionId: 'trace-test', failure: 'Stuck', events: [{ t: Date.now(), type: 'decision', action: 'click' }] });
+  const lines = readTraces().filter(l => l.sessionId === 'trace-test');
+  const call = lines.find(l => l.kind === 'call');
+  assert.equal(call.task, 'next-action');
+  assert.match(call.sent, /^Goal: Create the account/);
+  assert.ok(call.reply, 'what the model answered');
+  const run = lines.find(l => l.kind === 'run');
+  assert.deepEqual([run.outcome, run.failure, run.events[0].action], ['failed', 'Stuck', 'click']);
+});

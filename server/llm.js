@@ -6,6 +6,7 @@ import { SYSTEM_PROMPTS } from './prompts.js';
 import { mockAnswer } from './mock.js';
 import { logCall, costOf } from './ledger.js';
 import { checkBudget, recordUsage } from './account.js';
+import { trace, traceEnabled } from './trace.js';
 
 export function getConfig() {
   const key = process.env.MUBIT_API_KEY || '';
@@ -51,10 +52,16 @@ export async function callTask({ task, userMessage, sessionId, kind = 'live', mo
     }
   } catch (err) {
     logCall({ task, kind, ms: Date.now() - started, ok: false, model: config.model, provider: config.provider, sessionId, error: err.message, requestId: err.requestId });
+    trace('call', { sessionId, task, mode: kind, model: config.model, ms: Date.now() - started, sent: userMessage.slice(0, 8000), image: !!image, error: err.message });
     throw err;
   }
   const ms = Date.now() - started;
   const json = parseJson(result.text);
+  trace('call', {
+    sessionId, task, mode: kind, model: config.model, ms, sent: userMessage.slice(0, 8000), image: !!image,
+    reply: result.text.slice(0, 4000), ...(result.thinking ? { thinking: result.thinking.slice(0, 4000) } : {}),
+    inTokens: result.inTokens, outTokens: result.outTokens, requestId: result.requestId,
+  });
   const logged = logCall({
     task, kind, ms, ok: !!json, model: config.model, provider: config.provider, sessionId, ...(image ? { image: true } : {}),
     inTokens: result.inTokens, outTokens: result.outTokens, requestId: result.requestId,
@@ -109,6 +116,8 @@ export function anthropicBody(model, system, userMessage, sessionId, image = nul
     max_tokens: legacy ? 600 : 4000,
     // MUBIT_EFFORT: how hard newer models think (low, medium, high…), for trying models out.
     ...(legacy ? { temperature: 0 } : { output_config: { effort: process.env.MUBIT_EFFORT || 'low' } }),
+    // While tracing, ask for a summary of the model's thinking, so a trace shows why it chose.
+    ...(!legacy && traceEnabled() ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
     system,
     messages: [{ role: 'user', content: image
       ? [{ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } }, { type: 'text', text: userMessage }]
@@ -124,7 +133,8 @@ async function callAnthropic(config, system, userMessage, sessionId, image) {
     'anthropic-version': '2023-06-01',
   }, anthropicBody(config.model, system, userMessage, sessionId, image));
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  return { text, inTokens: data.usage?.input_tokens || 0, outTokens: data.usage?.output_tokens || 0, requestId };
+  const thinking = (data.content || []).filter(b => b.type === 'thinking').map(b => b.thinking).filter(Boolean).join('\n');
+  return { text, thinking, inTokens: data.usage?.input_tokens || 0, outTokens: data.usage?.output_tokens || 0, requestId };
 }
 
 async function callOpenAI(config, system, userMessage, sessionId, image) {

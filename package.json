@@ -14,7 +14,8 @@
     "test:all": "node --test tests/unit.test.js tests/qa-server.test.js tests/features.test.js tests/sheet.test.js tests/accounts.test.js tests/speech.test.js tests/e2e.test.js tests/signin-e2e.test.js tests/tools-e2e.test.js tests/guard-e2e.test.js tests/qa-e2e.test.js",
     "seed": "node scripts/seed-traffic.js",
     "live": "node scripts/live-check.js",
-    "seed:guard": "node scripts/seed-guard.js"
+    "seed:guard": "node scripts/seed-guard.js",
+    "trace": "node scripts/trace.js"
   },
   "license": "MIT",
   "devDependencies": {

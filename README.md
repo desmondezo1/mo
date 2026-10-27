@@ -197,6 +197,7 @@ The full walkthrough, settings and live checks are in [TESTING.md](TESTING.md). 
 | `server/llm.js`, `server/prompts.js` | Every model call goes through Mubit; the fixed instructions per task live here (a test guards them). |
 | `server/memory.js`, `server/refine.js` | Skills and their lessons (with your notes), recalled into later runs; detours removed from demonstrations before they train anything. |
 | `server/ledger.js` | Local log of every call: counts, speed, cost. |
+| `server/trace.js`, `scripts/trace.js` | Run traces for evaluation (temporary): each model call's message, answer and thinking summary, plus what the run did in the browser and each proof check. `npm run trace` prints the last run; `MO_TRACE=off` turns it off; kept 14 days. |
 | `server/demo-site/` | Sarah's Helpdesk form and the CSV from Sales (`files/`), the New starters sheet and PeopleDesk (an HR form), Sarah's inbox (100 made-up emails and an email preferences page), Calmly and Iron Gym (subscriptions to cancel), Trattoria Nove (restaurant), Tubely (offline video site) and the phishing demo chat. |
 | `scripts/seed-traffic.js`, `scripts/seed-guard.js` | Send practice calls through Mubit so each task has enough examples to train; `seed-guard` also scores Claude on known phishing and real links. |
 | `exam/` | Does the adapter learn? Mubit-routed vs provider-only on Mind2Web and the demo sites. |
